@@ -1,6 +1,29 @@
 # MemConn
 MemConn is an in-memory network connection for Go.
 
+## Getting Started
+MemCon supports the following network types:
+
+| Network | Description |
+|---------|-------------|
+| `memu`  | This is an unbuffered, in-memory implementation of `net.Conn` |
+
+A new `net.Listener` used to serve HTTP, gRPC, etc. may be created as
+follows:
+
+```go
+lis, err := memconn.Listen("memu", "UniqueName")
+```
+
+Clients can then dial the connection:
+
+```go
+client, err := memconn.Dial("memu", "UniqueName")
+```
+
+MemConn provides a global registry for its connections, but custom
+regitries can be implemented using `memconn.Provider`.
+
 ## Performance
 The benchmark results illustrates MemConn's performance against TCP
 and UNIX domain sockets:
