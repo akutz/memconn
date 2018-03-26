@@ -18,4 +18,5 @@ go_import_path: github.com/akutz/memconn
 install: true
 script:
   - go test
+  - go test -race -run 'Race$'
   - go test -benchmem -bench Benchmark -run Benchmark -v
