@@ -1,8 +1,6 @@
 # MemConn
-MemConn is an in-memory network connection for Go. At its core MemConn
-utilizes `net.Pipe`. However, unlike the `net.Conn` objects returned by
-`net.Pipe`, MemConn supports deadlines just like any other Golang network
-implementation.
+MemConn is a named, in-memory network connection for Go that supports
+deadlines.
 
 ## Create a Server
 A new `net.Listener` used to serve HTTP, gRPC, etc. is created with
@@ -35,8 +33,8 @@ $ go test -benchmem -bench Benchmark -run Benchmark -v
 goos: darwin
 goarch: amd64
 pkg: github.com/akutz/memconn
-BenchmarkMemConn-8   	 1000000	      1750 ns/op	    1385 B/op	      15 allocs/op
---- BENCH: BenchmarkMemConn-8
+BenchmarkMemu-8   	 1000000	      1750 ns/op	    1385 B/op	      15 allocs/op
+--- BENCH: BenchmarkMemu-8
 	memconn_test.go:105: serving memu:1522087455339984096
 	memconn_test.go:105: serving memu:1522087455340519873
 	memconn_test.go:105: serving memu:1522087455341366262
