@@ -7,12 +7,43 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/akutz/memconn"
 )
+
+// TestMemuRace is for verifying there is no race condition when
+// calling Dial and Listen concurrently for the same address. The
+// Provider.Dial function did not used to initialize the Provider.cnxns
+// map since the function only queries it, and querying a nil map is
+// allowed. However, Go detected a race condition when the field was
+// both assigned and queried at the same time.
+//
+// Many thanks to @vburenin for spotting this!
+//
+// To reactive the race condition just remove the p.Once call at the
+// top of provider.Dial and then execute:
+//
+//         $ go test -race -run TestMemuRace
+func TestMemuRace(t *testing.T) {
+	for i := 0; i < 1000; i++ {
+		p := &memconn.Provider{}
+		addr := strconv.Itoa(i)
+		go func(p *memconn.Provider, addr string) {
+			if c, _ := p.Listen("memu", addr); c != nil {
+				go c.Accept()
+			}
+		}(p, addr)
+		go func(p *memconn.Provider, addr string) {
+			if c, _ := p.Dial("memu", addr); c != nil {
+				c.Close()
+			}
+		}(p, addr)
+	}
+}
 
 const parallelTests = 100
 

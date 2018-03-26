@@ -45,6 +45,8 @@ func (p *Provider) Listen(network, addr string) (net.Listener, error) {
 // net.Conn object if the connection is successful.
 // Known networks are "memu" (memconn unbuffered).
 func (p *Provider) Dial(_, name string) (net.Conn, error) {
+	p.Once.Do(func() { p.cnxns = map[string]*memConn{} })
+
 	p.RLock()
 	defer p.RUnlock()
 
