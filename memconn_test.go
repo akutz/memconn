@@ -24,9 +24,6 @@ import (
 //
 // Many thanks to @vburenin for spotting this!
 //
-// To reactive the race condition just remove the p.Once call at the
-// top of provider.Dial and then execute:
-//
 //         $ go test -race -run TestMemuRace
 func TestMemuRace(t *testing.T) {
 	for i := 0; i < 1000; i++ {

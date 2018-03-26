@@ -8,7 +8,6 @@ import (
 
 // Provider is used to track named MemConn objects.
 type Provider struct {
-	sync.Once
 	sync.RWMutex
 	chanPool sync.Pool
 	cnxns    map[string]*memConn
@@ -21,10 +20,12 @@ var provider = Provider{}
 // If a MemConn with the specified address already exists then an error is
 // returned.
 func (p *Provider) Listen(network, addr string) (net.Listener, error) {
-	p.Once.Do(func() { p.cnxns = map[string]*memConn{} })
-
 	p.Lock()
 	defer p.Unlock()
+
+	if p.cnxns == nil {
+		p.cnxns = map[string]*memConn{}
+	}
 
 	if _, ok := p.cnxns[addr]; ok {
 		return nil, fmt.Errorf("memconn: addr in use: %s", addr)
@@ -45,8 +46,6 @@ func (p *Provider) Listen(network, addr string) (net.Listener, error) {
 // net.Conn object if the connection is successful.
 // Known networks are "memu" (memconn unbuffered).
 func (p *Provider) Dial(_, name string) (net.Conn, error) {
-	p.Once.Do(func() { p.cnxns = map[string]*memConn{} })
-
 	p.RLock()
 	defer p.RUnlock()
 
