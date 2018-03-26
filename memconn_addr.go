@@ -1,15 +1,14 @@
 package memconn
 
-type addr struct {
-	name string
+type memAddr struct {
+	network string
+	addr    string
 }
 
-const network = "memconn"
-
-func (a addr) Network() string {
-	return network
+func (m memAddr) Network() string {
+	return m.network
 }
 
-func (a addr) String() string {
-	return a.name
+func (m memAddr) String() string {
+	return m.addr
 }

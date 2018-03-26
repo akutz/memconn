@@ -2,44 +2,35 @@ package memconn
 
 import (
 	"net"
-	"net/http"
 	"sync"
 )
 
-type memconn struct {
-	sync.Once
-	addr addr
-	bsiz uint64
+type memConn struct {
+	addr memAddr
 	chcn chan net.Conn
-	done func()
+	done func(string) error
 	pool *sync.Pool
 }
 
-func (m *memconn) Dial() (net.Conn, error) {
-	r, w := pipe(&m.addr, m.pool)
+func (m *memConn) Dial() (net.Conn, error) {
+	r, w := pipe(m)
 	go func() {
 		m.chcn <- r
 	}()
 	return w, nil
 }
 
-func (m *memconn) Accept() (net.Conn, error) {
+func (m *memConn) Accept() (net.Conn, error) {
 	for c := range m.chcn {
 		return c, nil
 	}
-	return nil, http.ErrServerClosed
+	return nil, ErrServerClosed
 }
 
-func (m *memconn) Close() error {
-	// The close logic is executed exactly once. Additional calls to
-	// Close immediately return http.ErrServerClosed.
-	m.Do(func() {
-		close(m.chcn)
-		m.done()
-	})
-	return http.ErrServerClosed
+func (m *memConn) Close() error {
+	return m.done(m.addr.addr)
 }
 
-func (m *memconn) Addr() net.Addr {
+func (m *memConn) Addr() net.Addr {
 	return m.addr
 }

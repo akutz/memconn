@@ -1,78 +1,100 @@
 package memconn_test
 
 import (
-	"context"
+	"fmt"
+	"io/ioutil"
 	"net"
-	"net/http"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/akutz/memconn"
 )
 
 func BenchmarkMemConn(b *testing.B) {
-	addr := b.Name()
-	lis, err := memconn.Listen(addr)
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer lis.Close()
-	benchmarkNetConnParallel(b, lis, memconn.DialHTTP(addr))
+	addr := fmt.Sprintf("%d", time.Now().UnixNano())
+	lis := serve(b, memconn.Listen, "memu", addr, false)
+	benchmarkNetConnParallel(b, lis, memconn.Dial)
 }
 
 func BenchmarkTCP(b *testing.B) {
-	lis, err := net.Listen("tcp", "127.0.0.1:")
-	if err != nil {
-		b.Fatalf("failed to listen on 127.0.0.1: %v", err)
-	}
-	benchmarkTCPOrUnix(b, lis)
+	lis := serve(b, net.Listen, "tcp", "127.0.0.1:", false)
+	benchmarkNetConnParallel(b, lis, net.Dial)
 }
-
-const sockFile = ".memconn.sock"
 
 func BenchmarkUnix(b *testing.B) {
-	defer os.RemoveAll(sockFile)
-	lis, err := net.Listen("unix", sockFile)
+	// Get a temp file name to use for the socket file.
+	f, err := ioutil.TempFile("", "")
 	if err != nil {
-		b.Fatalf("failed to listen on %s: %v", sockFile, err)
+		b.Fatalf("error creating temp sock file: %v", err)
 	}
-	benchmarkTCPOrUnix(b, lis)
+	fileName := f.Name()
+	f.Close()
+	os.RemoveAll(fileName)
+	sockFile := fmt.Sprintf("%s.sock", fileName)
+
+	// Ensure the socket file is cleaned up.
+	defer os.RemoveAll(sockFile)
+
+	lis := serve(b, net.Listen, "unix", sockFile, false)
+
+	// The UNIX dialer keeps attempting to connect if an ECONNREFUSED
+	// error is encountered due to heavy use.
+	dial := func(network, addr string) (net.Conn, error) {
+		for {
+			client, err := net.Dial(network, addr)
+
+			// If there is no error then return the client
+			if err == nil {
+				return client, nil
+			}
+
+			// If the error is ECONNREFUSED then keep trying to connect.
+			if strings.Contains(err.Error(), "connect: connection refused") {
+				continue
+			}
+
+			return nil, err
+		}
+	}
+	benchmarkNetConnParallel(b, lis, dial)
 }
 
-func benchmarkTCPOrUnix(b *testing.B, lis net.Listener) {
-	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(
-				context.Context, string, string) (net.Conn, error) {
-				return net.Dial(lis.Addr().Network(), lis.Addr().String())
-			},
-			// If the error "can't assign requested address" occurs when
-			// running the benchmark then try reducing the following value
-			// or increasing the number of open file descriptors allowed
-			// on this host.
-			MaxIdleConnsPerHost: 100,
-		},
-	}
-	benchmarkNetConnParallel(b, lis, client)
-}
+var fixedData = []byte{0, 1, 2, 3, 4, 5, 6, 7}
 
 func benchmarkNetConnParallel(
 	b *testing.B,
 	lis net.Listener,
-	client *http.Client) {
+	dial func(string, string) (net.Conn, error)) {
 
-	// Create and launch an HTTP server.
-	server := goHTTPServer(lis, b.Fatalf)
-
-	// Make sure the server is shutdown.
-	defer server.Close()
-
+	defer lis.Close()
+	network, addr := lis.Addr().Network(), lis.Addr().String()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			if err := postHTTPRequest(client); err != nil {
-				b.Fatal(err)
-			}
+			writeBenchmarkData(b, network, addr, dial)
 		}
 	})
+}
+
+func writeBenchmarkData(
+	logger hasLoggerFuncs,
+	network, addr string,
+	dial func(string, string) (net.Conn, error)) {
+
+	client, err := dial(network, addr)
+	if err != nil {
+		logger.Fatal(err)
+	}
+	defer client.Close()
+
+	if n, err := client.Write(fixedData); err != nil {
+		logger.Fatal(err)
+	} else if n != dataLen {
+		logger.Fatalf("wrote != %d bytes: %d", dataLen, n)
+	}
+	if c, ok := client.(*net.TCPConn); ok {
+		c.SetLinger(0)
+	}
 }

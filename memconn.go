@@ -1,44 +1,39 @@
 package memconn
 
 import (
+	"errors"
 	"net"
-	"net/http"
 )
 
-// MemConn is a memory-based network connection that can be provided to
-// servers as a net.Listener which clients can then access via the same
-type MemConn interface {
-	net.Listener
-	Dial() (net.Conn, error)
-}
+// ErrServerClosed is returned by the Listen method after a call to Close.
+var ErrServerClosed = errors.New("memconn: Server closed")
 
 // Listen creates a new, named MemConn and stores it in the default
 // MemConn provider.
-// If a MemConn with the specified name already exists then an error is
+// Known networks are "memu" (memconn unbuffered).
+// If a MemConn with the specified address already exists then an error is
 // returned.
-// The network type returned by MemConn.Addr().Network() is "memconn".
-// The provided name is returned by MemConn.Addr().String().
-func Listen(name string) (net.Listener, error) {
-	return provider.Listen(name)
+func Listen(network, addr string) (net.Listener, error) {
+	return provider.Listen(network, addr)
 }
 
 // Dial dials a named MemConn in the default MemConn provider and returns the
 // net.Conn object if the connection is successful.
-func Dial(name string) (net.Conn, error) {
-	return provider.Dial(name)
-}
-
-// DialHTTP dials a named PipeConn in the default MemConn provider and
-// returns an http.Client object if the connection is successful. The client's
-// Transport field is set to a *http.Transport with a custom DialContext
-// function that uses this package's Dial function to access the named
-// pipe.
-func DialHTTP(name string) *http.Client {
-	return provider.DialHTTP(name)
+// Known networks are "memu" (memconn unbuffered).
+func Dial(network, addr string) (net.Conn, error) {
+	return provider.Dial(network, addr)
 }
 
 // Drain removes all of the channels from the channel pool in the default
 // MemConn provider.
 func Drain() {
 	provider.Drain()
+}
+
+// Prime initializes the default MemConn provider with the specified
+// number of channels.
+func Prime(count int) {
+	for i := 0; i < count; i++ {
+		provider.chanPool.Put(make(chan interface{}, 1))
+	}
 }

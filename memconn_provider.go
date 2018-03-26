@@ -1,10 +1,8 @@
 package memconn
 
 import (
-	"context"
 	"fmt"
 	"net"
-	"net/http"
 	"sync"
 )
 
@@ -13,44 +11,40 @@ type Provider struct {
 	sync.Once
 	sync.RWMutex
 	chanPool sync.Pool
-	cnxns    map[string]MemConn
+	cnxns    map[string]*memConn
 }
 
-var provider = &Provider{}
+var provider = Provider{}
 
 // Listen creates a new, named MemConn and stores it in the provider.
-// If a MemConn with the specified name already exists then an error is
+// Known networks are "memu" (memconn unbuffered).
+// If a MemConn with the specified address already exists then an error is
 // returned.
-// The network type returned by MemConn.Addr().Network() is "memconn".
-// The provided name is returned by MemConn.Addr().String().
-func (p *Provider) Listen(name string) (net.Listener, error) {
-	p.Once.Do(func() { p.cnxns = map[string]MemConn{} })
+func (p *Provider) Listen(network, addr string) (net.Listener, error) {
+	p.Once.Do(func() { p.cnxns = map[string]*memConn{} })
 
 	p.Lock()
 	defer p.Unlock()
 
-	if _, ok := p.cnxns[name]; ok {
-		return nil, fmt.Errorf("memconn: name in use: %s", name)
+	if _, ok := p.cnxns[addr]; ok {
+		return nil, fmt.Errorf("memconn: addr in use: %s", addr)
 	}
 
-	c := &memconn{
-		addr: addr{name: name},
+	c := &memConn{
+		addr: memAddr{network: network, addr: addr},
 		chcn: make(chan net.Conn, 1),
-		done: func() {
-			p.Lock()
-			defer p.Unlock()
-			delete(p.cnxns, name)
-		},
+		done: p.closeConn,
 		pool: &p.chanPool,
 	}
 
-	p.cnxns[name] = c
+	p.cnxns[addr] = c
 	return c, nil
 }
 
-// Dial dials a named PipeConn in the connection pool and returns the
+// Dial dials a named MemConn that belongs to this provider and returns the
 // net.Conn object if the connection is successful.
-func (p *Provider) Dial(name string) (net.Conn, error) {
+// Known networks are "memu" (memconn unbuffered).
+func (p *Provider) Dial(_, name string) (net.Conn, error) {
 	p.RLock()
 	defer p.RUnlock()
 
@@ -61,31 +55,26 @@ func (p *Provider) Dial(name string) (net.Conn, error) {
 	return c.Dial()
 }
 
-// DialHTTP dials a named PipeConn in the connection pool and returns an
-// http.Client object if the connection is successful. The client's
-// Transport field is set to a *http.Transport with a custom DialContext
-// function that uses this package's Dial function to access the named
-// pipe.
-func (p *Provider) DialHTTP(name string) *http.Client {
-	return &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(
-				context.Context, string, string) (net.Conn, error) {
-				conn, err := Dial(name)
-				if err != nil {
-					return nil, err
-				}
-				return conn, nil
-			},
-		},
+// Drain removes all of the channels from the channel pool.
+func (p *Provider) Drain() {
+	for p.chanPool.Get() != nil {
+		// Drain the pool
 	}
 }
 
-// Drain removes all of the channels from the channel pool.
-func (p *Provider) Drain() {
-	for {
-		if p.chanPool.Get() == nil {
-			break
-		}
+// Prime initializes the provider with n channels.
+func (p *Provider) Prime(n int) {
+	for i := 0; i < n; i++ {
+		p.chanPool.Put(make(chan interface{}, 1))
 	}
+}
+
+func (p *Provider) closeConn(name string) error {
+	p.Lock()
+	defer p.Unlock()
+	if c, ok := p.cnxns[name]; ok {
+		delete(p.cnxns, name)
+		close(c.chcn)
+	}
+	return ErrServerClosed
 }

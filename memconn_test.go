@@ -1,16 +1,16 @@
 package memconn_test
 
 import (
+	"bytes"
 	"fmt"
-	"io"
 	"io/ioutil"
+	"math/rand"
 	"net"
-	"net/http"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/akutz/memconn"
-	"github.com/golang/go/src/math/rand"
 )
 
 const parallelTests = 100
@@ -19,86 +19,161 @@ const parallelTests = 100
 // interfere with one another and validats that the response data
 // matches the expected result.
 func TestMemConn(t *testing.T) {
+	lis := serve(t, memconn.Listen, "memu", t.Name(), true)
+	testNetConnParallel(t, lis, memconn.Dial)
+}
 
-	// addr is the name used to get a new memconn net.Conn with
-	// memconn.Listen and then later to dial the same connection
-	// with memconn.Dial (or memconn.DialHTTP)
-	addr := t.Name()
+func TestTCP(t *testing.T) {
+	lis := serve(t, net.Listen, "tcp", "127.0.0.1:", true)
+	testNetConnParallel(t, lis, net.Dial)
+}
 
-	// Use memconn.Listen to create a new net.Listener used the HTTP
-	// server below.
-	lis, err := memconn.Listen(addr)
+func TestUnix(t *testing.T) {
+	// Get a temp file name to use for the socket file.
+	f, err := ioutil.TempFile("", "")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("error creating temp sock file: %v", err)
 	}
+	fileName := f.Name()
+	f.Close()
+	os.RemoveAll(fileName)
+	sockFile := fmt.Sprintf("%s.sock", fileName)
+
+	// Ensure the socket file is cleaned up.
+	defer os.RemoveAll(sockFile)
+
+	lis := serve(t, net.Listen, "unix", sockFile, true)
+
+	// The UNIX dialer keeps attempting to connect if an ECONNREFUSED
+	// error is encountered due to heavy use.
+	dial := func(network, addr string) (net.Conn, error) {
+		for {
+			client, err := net.Dial(network, addr)
+
+			// If there is no error then return the client
+			if err == nil {
+				return client, nil
+			}
+
+			// If the error is ECONNREFUSED then keep trying to connect.
+			if strings.Contains(err.Error(), "connect: connection refused") {
+				continue
+			}
+
+			return nil, err
+		}
+	}
+	testNetConnParallel(t, lis, dial)
+}
+
+func testNetConnParallel(
+	t *testing.T,
+	lis net.Listener,
+	dial func(string, string) (net.Conn, error)) {
+
 	defer lis.Close()
-
-	// Create and launch an HTTP server.
-	server := goHTTPServer(lis, t.Fatalf)
-
-	// Make sure the server is shutdown.
-	defer server.Close()
-
+	network, addr := lis.Addr().Network(), lis.Addr().String()
 	t.Run("Parallel", func(t *testing.T) {
 		for i := 0; i < parallelTests; i++ {
 			t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 				t.Parallel()
-
-				// Dial the HTTP server that is listening on the memconn
-				// listener and post an HTTP request. The memconn.DialHTTP
-				// function is just a shortcut that returns an *http.Client.
-				if err := postHTTPRequest(memconn.DialHTTP(addr)); err != nil {
-					t.Fatal(err)
-				}
+				writeAndReadTestData(t, network, addr, dial)
 			})
 		}
 	})
 }
 
-func goHTTPServer(
-	lis net.Listener,
-	fatalf func(string, ...interface{})) *http.Server {
+const dataLen = 8
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
-		if _, err := io.Copy(w, r.Body); err != nil {
-			fatalf("write http response failed: %v", err)
-		}
-	})
-	server := &http.Server{Handler: mux}
-	go server.Serve(lis)
-	return server
+type hasLoggerFuncs interface {
+	Logf(string, ...interface{})
+	Fatal(...interface{})
+	Fatalf(string, ...interface{})
 }
 
-func postHTTPRequest(client *http.Client) error {
-	// Generate a random integer to be the unique request
-	// data posted to the HTTP server.
-	reqData := fmt.Sprintf("%d", rand.Int())
+func serve(
+	logger hasLoggerFuncs,
+	listen func(string, string) (net.Listener, error),
+	network, addr string,
+	writeBack bool) net.Listener {
 
-	// Post the request data.
-	rep, err := client.Post(
-		"http://host/",
-		"text/pain",
-		strings.NewReader(reqData))
+	lis, err := listen(network, addr)
 	if err != nil {
-		return fmt.Errorf("http request failed: %v", err)
+		logger.Fatalf("error serving %s:%s: %v", network, addr, err)
 	}
-	if rep.StatusCode != 200 {
-		return fmt.Errorf("http status not okay: %d", rep.StatusCode)
-	}
-	defer rep.Body.Close()
 
-	buf, err := ioutil.ReadAll(rep.Body)
+	logger.Logf("serving %s:%s",
+		lis.Addr().Network(),
+		lis.Addr().String())
+
+	go func() {
+		for {
+			c, err := lis.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				buf := make([]byte, dataLen)
+				n, err := c.Read(buf)
+				if err != nil {
+					logger.Fatal(err)
+				}
+				if n != dataLen {
+					logger.Fatalf("read != %d bytes: %d", dataLen, n)
+				}
+				if writeBack {
+					n, err := c.Write(buf)
+					if err != nil {
+						logger.Fatal(err)
+					}
+					if n != dataLen {
+						logger.Fatalf("write != %d bytes: %d", dataLen, n)
+					}
+				}
+				if err := c.Close(); err != nil {
+					logger.Fatal(err)
+				}
+			}(c)
+		}
+	}()
+
+	return lis
+}
+
+func writeAndReadTestData(
+	logger hasLoggerFuncs,
+	network, addr string,
+	dial func(string, string) (net.Conn, error)) {
+
+	client, err := dial(network, addr)
 	if err != nil {
-		return fmt.Errorf("read http response failed: %v", err)
+		logger.Fatal(err)
+	}
+	defer client.Close()
+
+	// Create the buffer to write to the server and fill it with random data.
+	wbuf := make([]byte, dataLen)
+	if n, err := rand.Read(wbuf); err != nil {
+		logger.Fatal(err)
+	} else if n != dataLen {
+		logger.Fatalf("rand != %d bytes: %d", dataLen, n)
 	}
 
-	repData := string(buf)
-	if repData != reqData {
-		return fmt.Errorf("invalid response: reqData=%v, repData=%v",
-			reqData, repData)
+	// Write the buffer to the server and assert that dataLen bytes were
+	// successfully written.
+	if n, err := client.Write(wbuf); err != nil {
+		logger.Fatal(err)
+	} else if n != dataLen {
+		logger.Fatalf("wrote != %d bytes: %d", dataLen, n)
 	}
 
-	return nil
+	// Read the response and assert that it matches what was sent.
+	rbuf := make([]byte, dataLen)
+	if n, err := client.Read(rbuf); err != nil {
+		logger.Fatal(err)
+	} else if n != dataLen {
+		logger.Fatalf("read != %d bytes: %d", dataLen, n)
+	} else if !bytes.Equal(rbuf, wbuf) {
+		logger.Fatalf("read != write: rbuf=%v, wbuf=%v", rbuf, wbuf)
+	}
 }
