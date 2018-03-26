@@ -64,10 +64,15 @@ func (p *Provider) Drain() {
 	}
 }
 
+type ioResult struct {
+	n   int
+	err error
+}
+
 // Prime initializes the provider with n channels.
 func (p *Provider) Prime(n int) {
 	for i := 0; i < n; i++ {
-		p.chanPool.Put(make(chan interface{}, 1))
+		p.chanPool.Put(make(chan ioResult, 1))
 	}
 }
 

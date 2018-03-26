@@ -2,7 +2,6 @@ package memconn
 
 import (
 	"errors"
-	"fmt"
 	"net"
 	"time"
 )
@@ -91,28 +90,23 @@ func (p *pipeConn) doReadOrWrite(op opType, data []byte) (int, error) {
 	timeout := time.NewTimer(deadline.Sub(time.Now()))
 	defer timeout.Stop()
 
-	c, ok := p.conn.pool.Get().(chan interface{})
+	c, ok := p.conn.pool.Get().(chan ioResult)
 	if !ok {
 		// The channel must be buffered with a length of 1 or else
 		// the send operations in the below goroutine will block
 		// forever, preventing the goroutine from exiting, if the
 		// IO operation times out.
-		c = make(chan interface{}, 1)
+		c = make(chan ioResult, 1)
 	}
 
 	go func() {
-		var n int
-		var err error
+		var r ioResult
 		if op == opRead {
-			n, err = p.Conn.Read(data)
+			r.n, r.err = p.Conn.Read(data)
 		} else {
-			n, err = p.Conn.Write(data)
+			r.n, r.err = p.Conn.Write(data)
 		}
-		if err != nil {
-			c <- err
-		} else {
-			c <- n
-		}
+		c <- r
 	}()
 
 	select {
@@ -124,15 +118,8 @@ func (p *pipeConn) doReadOrWrite(op opType, data []byte) (int, error) {
 			Addr:   p.conn.addr,
 			Err:    ErrTimeout,
 		}
-	case i := <-c:
+	case r := <-c:
 		p.conn.pool.Put(c)
-		switch ti := i.(type) {
-		case int:
-			return ti, nil
-		case error:
-			return 0, ti
-		default:
-			panic(fmt.Sprintf("memconn: invalid type: %[1]T %[1]v", i))
-		}
+		return r.n, r.err
 	}
 }
