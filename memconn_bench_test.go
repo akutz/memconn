@@ -10,7 +10,7 @@ import (
 	"github.com/akutz/memconn"
 )
 
-func BenchmarkMemConn(b *testing.B) {
+func BenchmarkMemu(b *testing.B) {
 	addr := fmt.Sprintf("%d", time.Now().UnixNano())
 	lis := serve(b, memconn.Listen, "memu", addr, false)
 	benchmarkNetConnParallel(b, lis, memconn.Dial)

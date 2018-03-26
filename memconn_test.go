@@ -16,10 +16,7 @@ import (
 
 const parallelTests = 100
 
-// TestMemConn validates that multiple MemConn connections do not
-// interfere with one another and validats that the response data
-// matches the expected result.
-func TestMemConn(t *testing.T) {
+func TestMemu(t *testing.T) {
 	lis := serve(t, memconn.Listen, "memu", t.Name(), true)
 	testNetConnParallel(t, lis, memconn.Dial)
 }
