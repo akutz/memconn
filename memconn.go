@@ -30,10 +30,7 @@ func Drain() {
 	provider.Drain()
 }
 
-// Prime initializes the default MemConn provider with the specified
-// number of channels.
-func Prime(count int) {
-	for i := 0; i < count; i++ {
-		provider.chanPool.Put(make(chan interface{}, 1))
-	}
+// Prime initializes the default MemConn provider with n channels.
+func Prime(n int) {
+	provider.Prime(n)
 }
