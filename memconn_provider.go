@@ -48,12 +48,10 @@ func (p *Provider) Listen(network, addr string) (net.Listener, error) {
 func (p *Provider) Dial(_, name string) (net.Conn, error) {
 	p.RLock()
 	defer p.RUnlock()
-
-	c, ok := p.cnxns[name]
-	if !ok {
-		return nil, fmt.Errorf("memconn: invalid name: %s", name)
+	if c, ok := p.cnxns[name]; ok {
+		return c.Dial()
 	}
-	return c.Dial()
+	return nil, fmt.Errorf("memconn: invalid name: %s", name)
 }
 
 // Drain removes all of the channels from the channel pool.
