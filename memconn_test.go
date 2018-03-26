@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/akutz/memconn"
 )
@@ -28,42 +29,59 @@ func TestTCP(t *testing.T) {
 	testNetConnParallel(t, lis, net.Dial)
 }
 
-func TestUnix(t *testing.T) {
+func TestUNIX(t *testing.T) {
+	sockFile := getTempSockFile(t)
+	defer os.RemoveAll(sockFile)
+	lis := serve(t, net.Listen, "unix", sockFile, true)
+	testNetConnParallel(t, lis, dialUNIX)
+}
+
+const (
+	errConnRefused   = "connect: connection refused"
+	errConnTmpUnavai = "connect: resource temporarily unavailable"
+)
+
+var oneMillisecond = time.Duration(1) * time.Millisecond
+
+func getTempSockFile(logger hasLoggerFuncs) string {
 	// Get a temp file name to use for the socket file.
 	f, err := ioutil.TempFile("", "")
 	if err != nil {
-		t.Fatalf("error creating temp sock file: %v", err)
+		logger.Fatalf("error creating temp sock file: %v", err)
 	}
 	fileName := f.Name()
 	f.Close()
 	os.RemoveAll(fileName)
-	sockFile := fmt.Sprintf("%s.sock", fileName)
+	return fmt.Sprintf("%s.sock", fileName)
+}
 
-	// Ensure the socket file is cleaned up.
-	defer os.RemoveAll(sockFile)
+// dialUNIX is a custom dialer that keeps trying to connect in case
+// of ECONNREFUSED or EAGAIN
+func dialUNIX(network, addr string) (net.Conn, error) {
+	for {
+		client, err := net.Dial(network, addr)
 
-	lis := serve(t, net.Listen, "unix", sockFile, true)
-
-	// The UNIX dialer keeps attempting to connect if an ECONNREFUSED
-	// error is encountered due to heavy use.
-	dial := func(network, addr string) (net.Conn, error) {
-		for {
-			client, err := net.Dial(network, addr)
-
-			// If there is no error then return the client
-			if err == nil {
-				return client, nil
-			}
-
-			// If the error is ECONNREFUSED then keep trying to connect.
-			if strings.Contains(err.Error(), "connect: connection refused") {
-				continue
-			}
-
-			return nil, err
+		// If there is no error then return the client
+		if err == nil {
+			return client, nil
 		}
+
+		msg := err.Error()
+
+		// If the error is ECONNREFUSED then keep trying to connect.
+		if strings.Contains(msg, errConnRefused) {
+			time.Sleep(oneMillisecond)
+			continue
+		}
+
+		// If the error is EAGAIN then keep trying to connect.
+		if strings.Contains(msg, errConnTmpUnavai) {
+			time.Sleep(oneMillisecond)
+			continue
+		}
+
+		return nil, err
 	}
-	testNetConnParallel(t, lis, dial)
 }
 
 func testNetConnParallel(

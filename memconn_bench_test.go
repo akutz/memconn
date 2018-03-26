@@ -2,10 +2,8 @@ package memconn_test
 
 import (
 	"fmt"
-	"io/ioutil"
 	"net"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -23,42 +21,11 @@ func BenchmarkTCP(b *testing.B) {
 	benchmarkNetConnParallel(b, lis, net.Dial)
 }
 
-func BenchmarkUnix(b *testing.B) {
-	// Get a temp file name to use for the socket file.
-	f, err := ioutil.TempFile("", "")
-	if err != nil {
-		b.Fatalf("error creating temp sock file: %v", err)
-	}
-	fileName := f.Name()
-	f.Close()
-	os.RemoveAll(fileName)
-	sockFile := fmt.Sprintf("%s.sock", fileName)
-
-	// Ensure the socket file is cleaned up.
+func BenchmarkUNIX(b *testing.B) {
+	sockFile := getTempSockFile(b)
 	defer os.RemoveAll(sockFile)
-
 	lis := serve(b, net.Listen, "unix", sockFile, false)
-
-	// The UNIX dialer keeps attempting to connect if an ECONNREFUSED
-	// error is encountered due to heavy use.
-	dial := func(network, addr string) (net.Conn, error) {
-		for {
-			client, err := net.Dial(network, addr)
-
-			// If there is no error then return the client
-			if err == nil {
-				return client, nil
-			}
-
-			// If the error is ECONNREFUSED then keep trying to connect.
-			if strings.Contains(err.Error(), "connect: connection refused") {
-				continue
-			}
-
-			return nil, err
-		}
-	}
-	benchmarkNetConnParallel(b, lis, dial)
+	benchmarkNetConnParallel(b, lis, dialUNIX)
 }
 
 var fixedData = []byte{0, 1, 2, 3, 4, 5, 6, 7}
