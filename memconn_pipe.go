@@ -1,14 +1,22 @@
 package memconn
 
 import (
-	"errors"
 	"net"
 	"time"
 )
 
+type errTimeout string
+
+func (e errTimeout) Timeout() bool {
+	return true
+}
+func (e errTimeout) Error() string {
+	return string(e)
+}
+
 // ErrTimeout occurs when a read or write operation times out with respect
 // to the connection's deadline settings.
-var ErrTimeout = errors.New("i/o timeout")
+var ErrTimeout = errTimeout("i/o timeout")
 
 func pipe(conn *memConn) (net.Conn, net.Conn) {
 	c1, c2 := net.Pipe()

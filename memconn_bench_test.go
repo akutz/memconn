@@ -12,19 +12,19 @@ import (
 
 func BenchmarkMemu(b *testing.B) {
 	addr := fmt.Sprintf("%d", time.Now().UnixNano())
-	lis := serve(b, memconn.Listen, "memu", addr, false)
+	lis := serve(b, memconn.Listen, "memu", addr, 0, 0, false)
 	benchmarkNetConnParallel(b, lis, memconn.Dial)
 }
 
 func BenchmarkTCP(b *testing.B) {
-	lis := serve(b, net.Listen, "tcp", "127.0.0.1:", false)
+	lis := serve(b, net.Listen, "tcp", "127.0.0.1:", 0, 0, false)
 	benchmarkNetConnParallel(b, lis, net.Dial)
 }
 
 func BenchmarkUNIX(b *testing.B) {
 	sockFile := getTempSockFile(b)
 	defer os.RemoveAll(sockFile)
-	lis := serve(b, net.Listen, "unix", sockFile, false)
+	lis := serve(b, net.Listen, "unix", sockFile, 0, 0, false)
 	benchmarkNetConnParallel(b, lis, dialUNIX)
 }
 
