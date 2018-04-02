@@ -1,36 +1,53 @@
 package memconn
 
 import (
-	"errors"
+	"fmt"
 	"net"
 )
 
-// ErrServerClosed is returned by the Listen method after a call to Close.
-var ErrServerClosed = errors.New("memconn: Server closed")
+const (
+	networkMemb = "memb"
+	networkMemu = "memu"
 
-// Listen creates a new, named MemConn and stores it in the default
-// MemConn provider.
+	// addrLocalhost is a reserved address name. It is used when a
+	// Listen variant omits the local address or a Dial variant omits
+	// the remote address.
+	addrLocalhost = "localhost"
+)
+
+var provider = Provider{}
+
+// Listen begins listening at addr for the specified network.
 // Known networks are "memu" (memconn unbuffered).
-// If a MemConn with the specified address already exists then an error is
-// returned.
+// If addr is already in use then an error is returned.
 func Listen(network, addr string) (net.Listener, error) {
 	return provider.Listen(network, addr)
 }
 
-// Dial dials a named MemConn in the default MemConn provider and returns the
-// net.Conn object if the connection is successful.
+// ListenMem begins listening at laddr.
+// Known networks are "memu" (memconn unbuffered).
+// If laddr is nil then ListenMem listens on "localhost" on the
+// "memu" (unbuffered) network.
+func ListenMem(network string, laddr *Addr) (net.Listener, error) {
+	return provider.ListenMem(network, laddr)
+}
+
+// Dial dials a named connection.
 // Known networks are "memu" (memconn unbuffered).
 func Dial(network, addr string) (net.Conn, error) {
 	return provider.Dial(network, addr)
 }
 
-// Drain removes all of the channels from the channel pool in the default
-// MemConn provider.
-func Drain() {
-	provider.Drain()
+// DialMem dials a named connection.
+// Known networks are "memu" (memconn unbuffered).
+// If laddr is nil then a new, unique local address is generated
+// using a UUID.
+// If raddr is nil then the named, unbuffered endpoint "localhost"
+// is used.
+func DialMem(network string, laddr, raddr *Addr) (net.Conn, error) {
+	return provider.DialMem(network, laddr, raddr)
 }
 
-// Prime initializes the default MemConn provider with n channels.
-func Prime(n int) {
-	provider.Prime(n)
+func errUnknownNetwork(network string) error {
+	return fmt.Errorf("unknown network: %s", network)
 }

@@ -3,6 +3,7 @@ package memconn_test
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"math/rand"
 	"net"
@@ -90,7 +91,7 @@ func testMemuDeadline(t *testing.T, write, read time.Duration) {
 	defer client.Close()
 
 	// Set the deadline(s)
-	if read == write {
+	if read == write && read > 0 {
 		client.SetDeadline(time.Now().Add(read))
 	} else {
 		now := time.Now()
@@ -113,7 +114,7 @@ func testMemuDeadline(t *testing.T, write, read time.Duration) {
 			t.Fatalf("write timeout should have occurred: %v", e)
 		}
 	} else if e != nil {
-		t.Fatal(err)
+		t.Fatalf("%[1]T %+[1]v", e)
 	}
 
 	// Only perform the read test if a read deadline was set.
@@ -251,7 +252,7 @@ func serve(
 				}
 				buf := make([]byte, dataLen)
 				_, err := c.Read(buf)
-				if err != nil {
+				if err != nil && err != io.ErrClosedPipe && err != io.EOF {
 					logger.Fatal(err)
 				}
 				//if n != dataLen {

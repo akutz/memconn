@@ -1,6 +1,5 @@
 # MemConn
-MemConn is a named, in-memory network connection for Go that supports
-deadlines.
+MemConn provides named, in-memory network connections for Go.
 
 ## Create a Server
 A new `net.Listener` used to serve HTTP, gRPC, etc. is created with
@@ -29,30 +28,47 @@ The benchmark results illustrates MemConn's performance against TCP
 and UNIX domain sockets:
 
 ```shell
-$ go test -benchmem -bench Benchmark -run Benchmark -v
+$ make benchmark
+go test -bench . -run Bench -benchmem .
 goos: darwin
 goarch: amd64
 pkg: github.com/akutz/memconn
-BenchmarkMemu-8   	 1000000	      1503 ns/op	    1385 B/op	      15 allocs/op
+BenchmarkMemu-8               	  500000	      3216 ns/op	    1449 B/op	      19 allocs/op
 --- BENCH: BenchmarkMemu-8
-	memconn_test.go:238: serving memu:1522282533513414735
-	memconn_test.go:238: serving memu:1522282533513962026
-	memconn_test.go:238: serving memu:1522282533514763754
-	memconn_test.go:238: serving memu:1522282533530642645
-BenchmarkTCP-8    	   50000	     49890 ns/op	     902 B/op	      20 allocs/op
+	memconn_test.go:239: serving memu:1522710150158956844
+	memconn_test.go:239: serving memu:1522710150159779641
+	memconn_test.go:239: serving memu:1522710150160660752
+	memconn_test.go:239: serving memu:1522710150193395496
+BenchmarkMemuWithDeadline-8   	  500000	      4013 ns/op	    1732 B/op	      23 allocs/op
+--- BENCH: BenchmarkMemuWithDeadline-8
+	memconn_test.go:239: serving memu:1522710151802014675
+	memconn_test.go:239: serving memu:1522710151802462612
+	memconn_test.go:239: serving memu:1522710151803324077
+	memconn_test.go:239: serving memu:1522710151843170117
+BenchmarkTCP-8                	   20000	     62645 ns/op	     902 B/op	      20 allocs/op
 --- BENCH: BenchmarkTCP-8
-	memconn_test.go:238: serving tcp:127.0.0.1:60762
-	memconn_test.go:238: serving tcp:127.0.0.1:60764
-	memconn_test.go:238: serving tcp:127.0.0.1:60865
-	memconn_test.go:238: serving tcp:127.0.0.1:54504
-BenchmarkUNIX-8   	   50000	     23619 ns/op	    1425 B/op	      20 allocs/op
+	memconn_test.go:239: serving tcp:127.0.0.1:61231
+	memconn_test.go:239: serving tcp:127.0.0.1:61233
+	memconn_test.go:239: serving tcp:127.0.0.1:61334
+	memconn_test.go:239: serving tcp:127.0.0.1:54960
+BenchmarkTCPWithDeadline-8    	   20000	     76511 ns/op	     903 B/op	      20 allocs/op
+--- BENCH: BenchmarkTCPWithDeadline-8
+	memconn_test.go:239: serving tcp:127.0.0.1:58606
+	memconn_test.go:239: serving tcp:127.0.0.1:58608
+	memconn_test.go:239: serving tcp:127.0.0.1:58709
+	memconn_test.go:239: serving tcp:127.0.0.1:52351
+BenchmarkUNIX-8               	  100000	     24582 ns/op	    1424 B/op	      20 allocs/op
 --- BENCH: BenchmarkUNIX-8
-	memconn_test.go:238: serving unix:/var/folders/48/52fjq9r10zx3gnm7j57th0500000gn/T/594086618.sock
-	memconn_test.go:238: serving unix:/var/folders/48/52fjq9r10zx3gnm7j57th0500000gn/T/606000241.sock
-	memconn_test.go:238: serving unix:/var/folders/48/52fjq9r10zx3gnm7j57th0500000gn/T/265318684.sock
-	memconn_test.go:238: serving unix:/var/folders/48/52fjq9r10zx3gnm7j57th0500000gn/T/253179339.sock
-PASS
-ok  	github.com/akutz/memconn	5.840s
+	memconn_test.go:239: serving unix:/var/folders/48/52fjq9r10zx3gnm7j57th0500000gn/T/898168290.sock
+	memconn_test.go:239: serving unix:/var/folders/48/52fjq9r10zx3gnm7j57th0500000gn/T/679687641.sock
+	memconn_test.go:239: serving unix:/var/folders/48/52fjq9r10zx3gnm7j57th0500000gn/T/108764516.sock
+	memconn_test.go:239: serving unix:/var/folders/48/52fjq9r10zx3gnm7j57th0500000gn/T/642938739.sock
+BenchmarkUNIXWithDeadline-8   	  100000	     24080 ns/op	    1425 B/op	      20 allocs/op
+--- BENCH: BenchmarkUNIXWithDeadline-8
+	memconn_test.go:239: serving unix:/var/folders/48/52fjq9r10zx3gnm7j57th0500000gn/T/401393206.sock
+	memconn_test.go:239: serving unix:/var/folders/48/52fjq9r10zx3gnm7j57th0500000gn/T/006622237.sock
+	memconn_test.go:239: serving unix:/var/folders/48/52fjq9r10zx3gnm7j57th0500000gn/T/006865112.sock
+	memconn_test.go:239: serving unix:/var/folders/48/52fjq9r10zx3gnm7j57th0500000gn/T/465015895.sock
 ```
 
 MemConn is faster and allocates fewer objects than the TCP and UNIX domain
