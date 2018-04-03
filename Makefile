@@ -25,5 +25,5 @@ test:
 	go test
 	go test -race -run 'Race$$'
 
-test-go-1.9:
+test-go1.9:
 	MAKE_TARGET=test $(MAKE) docker-run
