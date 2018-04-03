@@ -38,7 +38,10 @@ func (p *Provider) Listen(network, addr string) (net.Listener, error) {
 func (p *Provider) ListenMem(
 	network string, laddr *Addr) (net.Listener, error) {
 
-	var listeners map[string]*listener
+	var (
+		onClose   func()
+		listeners map[string]*listener
+	)
 
 	switch network {
 	case networkMemu:
@@ -61,6 +64,18 @@ func (p *Provider) ListenMem(
 		}
 
 		listeners = p.memu.cache
+
+		// Set up the close handler that removes this
+		// listener from the cache when the listener is
+		// closed.
+		onClose = func() {
+			p.memu.Lock()
+			defer p.memu.Unlock()
+			if c, ok := listeners[laddr.Name]; ok {
+				delete(listeners, laddr.Name)
+				close(c.rcvr)
+			}
+		}
 	default:
 		return nil, errUnknownNetwork(network)
 	}
@@ -71,9 +86,10 @@ func (p *Provider) ListenMem(
 	}
 
 	c := &listener{
-		addr:  *laddr,
-		cnxns: make(chan net.Conn, 1),
-		close: p.closeListener,
+		addr:        *laddr,
+		rcvr:        make(chan net.Conn, 1),
+		onClose:     onClose,
+		activeCnxns: map[string]func() error{},
 	}
 
 	listeners[laddr.Name] = c
@@ -129,30 +145,9 @@ func (p *Provider) DialMem(
 	}
 
 	if c, ok := listeners[raddr.Name]; ok {
-		return c.dial(network, laddr, raddr)
+		return c.dial(network, *laddr, *raddr)
 	}
 
 	return nil, fmt.Errorf(
 		"unknown raddr: network=%s, addr=%s", network, raddr.Name)
-}
-
-func (p *Provider) closeListener(laddr Addr) error {
-
-	var listeners map[string]*listener
-
-	switch laddr.Network() {
-	case networkMemu:
-		p.memu.Lock()
-		defer p.memu.Unlock()
-		listeners = p.memu.cache
-	default:
-		return errUnknownNetwork(laddr.Network())
-	}
-
-	if c, ok := listeners[laddr.Name]; ok {
-		delete(listeners, laddr.Name)
-		close(c.cnxns)
-	}
-
-	return nil
 }

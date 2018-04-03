@@ -7,8 +7,17 @@ import (
 
 type pipeWrapper struct {
 	net.Conn
-	localAddr  net.Addr
-	remoteAddr net.Addr
+	localAddr  Addr
+	remoteAddr Addr
+	onClose    func()
+}
+
+func (p *pipeWrapper) Close() error {
+	err := p.Conn.Close()
+	if p.onClose != nil {
+		p.onClose()
+	}
+	return err
 }
 
 func (p pipeWrapper) LocalAddr() net.Addr {
