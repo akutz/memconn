@@ -1,46 +1,18 @@
 package memconn
 
 import (
-	"fmt"
 	"net"
-	"sync"
 )
 
 type listener struct {
 	addr    Addr
 	rcvr    chan net.Conn
 	onClose func()
-
-	// activeCnxns is a map of connections that have been received
-	// on the rcvr channel. The map is used to close all open
-	// connections when the listener's Close function is called.
-	// The map's key is the client address's name.
-	activeCnxns    map[string]func() error
-	activeCnxnsRWL sync.RWMutex
-}
-
-type errAddrUnavailable struct{}
-
-func (e errAddrUnavailable) Error() string {
-	return "addr unavailable"
+	done    chan struct{}
 }
 
 func (l *listener) dial(
 	network string, laddr, raddr Addr) (net.Conn, error) {
-
-	l.activeCnxnsRWL.Lock()
-	defer l.activeCnxnsRWL.Unlock()
-
-	// Ensure the laddr has a unique Name.
-	if _, ok := l.activeCnxns[laddr.Name]; ok {
-		return nil, &net.OpError{
-			Source: laddr,
-			Addr:   raddr,
-			Net:    network,
-			Op:     "dial",
-			Err:    errAddrUnavailable{},
-		}
-	}
 
 	// Get two, connected net.Conn objects.
 	local, remote := Pipe()
@@ -52,9 +24,8 @@ func (l *listener) dial(
 	//   * Errors returns from the internal pipe are checked and
 	//     have their internal OpError addr information replaced with
 	//     the correct address information.
-	//   * The remote pipe wrapper is able to remove itself from
-	//     the list of active connections when the listener's Close
-	//     function is called.
+	//   * A channel can be setup to cause the event of the Listener
+	//     closing closes the remoteWrapper immediately.
 	localWrapper, remoteWrapper := &pipeWrapper{
 		Conn:       local,
 		localAddr:  laddr,
@@ -63,21 +34,14 @@ func (l *listener) dial(
 		Conn:       remote,
 		localAddr:  raddr,
 		remoteAddr: laddr,
-		onClose: func() {
-			l.activeCnxnsRWL.Lock()
-			defer l.activeCnxnsRWL.Unlock()
-			delete(l.activeCnxns, laddr.Name)
-		},
 	}
 
-	// Record the connection as active. Please note that
-	// the close function recorded is the underlying
-	// Conn.Close, not the wrapper's Close. This is because
-	// the wrapper's Close function invokes the onClose
-	// callback, and that would result in a deadlock due
-	// to both l.onPipeClose and l.closeActiveCnxns both
-	// trying to obtain a lock on l.activeCnxnsRWL.
-	l.activeCnxns[laddr.Name] = remoteWrapper.Conn.Close
+	// Start a goroutine that closes the remote side of the connection
+	// as soon as the listener's done channel is no longer blocked.
+	go func() {
+		<-l.done
+		remoteWrapper.Close()
+	}()
 
 	// Announce a new connection.
 	go func() {
@@ -87,24 +51,30 @@ func (l *listener) dial(
 	return localWrapper, nil
 }
 
+type errListenerClosed struct{}
+
+func (e errListenerClosed) Error() string {
+	return "closed"
+}
+
 func (l *listener) Accept() (net.Conn, error) {
-	for serverWrapper := range l.rcvr {
-		return serverWrapper, nil
+	if !isClosedChan(l.done) {
+		for serverWrapper := range l.rcvr {
+			return serverWrapper, nil
+		}
+		// Notify pending remote endpoints that the listener is closed
+		// and that all pending operations should be unblocked.
+		close(l.done)
 	}
-	return nil, fmt.Errorf("listener closed: network=%s, addr=%s",
-		l.addr.Network(), l.addr.Name)
+	return nil, &net.OpError{
+		Addr:   l.addr,
+		Source: l.addr,
+		Net:    l.addr.Network(),
+		Err:    errListenerClosed{},
+	}
 }
 
 func (l *listener) Close() error {
-	// Close all active connections immediately.
-	go func() {
-		l.activeCnxnsRWL.Lock()
-		defer l.activeCnxnsRWL.Unlock()
-		for name, closeNow := range l.activeCnxns {
-			go closeNow()
-			delete(l.activeCnxns, name)
-		}
-	}()
 	l.onClose()
 	return nil
 }
