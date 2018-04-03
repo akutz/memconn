@@ -34,15 +34,9 @@ func (p *Provider) Listen(network, addr string) (net.Listener, error) {
 // ListenMem begins listening at laddr.
 // Known networks are "memu" (memconn unbuffered).
 // If laddr is nil then ListenMem listens on "localhost" on the
-// "memu" (unbuffered) network.
+// specified network.
 func (p *Provider) ListenMem(
 	network string, laddr *Addr) (net.Listener, error) {
-
-	// If laddr is not specified then set it to the reserved name
-	// "localhost".
-	if laddr == nil {
-		laddr = &Addr{Name: addrLocalhost}
-	}
 
 	var listeners map[string]*listener
 
@@ -51,6 +45,12 @@ func (p *Provider) ListenMem(
 		// Verify that network is compatible with laddr.
 		if laddr.Buffered {
 			return nil, errors.New("incompatible network & laddr")
+		}
+
+		// If laddr is not specified then set it to the reserved name
+		// "localhost".
+		if laddr == nil {
+			laddr = &Addr{Name: addrLocalhost}
 		}
 
 		p.memu.Lock()
@@ -95,29 +95,32 @@ func (p *Provider) Dial(network, addr string) (net.Conn, error) {
 // Known networks are "memu" (memconn unbuffered).
 // If laddr is nil then a new, unique local address is generated
 // using a UUID.
-// If raddr is nil then the named, unbuffered endpoint "localhost"
-// is used.
+// If raddr is nil then the "localhost" endpoint is used on the
+// specified network.
 func (p *Provider) DialMem(
 	network string, laddr, raddr *Addr) (net.Conn, error) {
-
-	if laddr == nil {
-		laddr = &Addr{Name: uuid.New().String()}
-	}
-	if raddr == nil {
-		raddr = &Addr{Name: addrLocalhost}
-	}
-
-	if network != laddr.Network() {
-		return nil, errors.New("incompatible network & laddr")
-	}
-	if network != raddr.Network() {
-		return nil, errors.New("incompatible network & raddr")
-	}
 
 	var listeners map[string]*listener
 
 	switch network {
 	case networkMemu:
+		// If laddr is not specified then create one using a UUID as
+		// the client address name.
+		if laddr == nil {
+			laddr = &Addr{Name: uuid.New().String()}
+		}
+		// If raddr is not specified then set it to the reserved name
+		// "localhost".
+		if raddr == nil {
+			raddr = &Addr{Name: addrLocalhost}
+		}
+		if laddr.Buffered {
+			return nil, errors.New("incompatible network & laddr")
+		}
+		if raddr.Buffered {
+			return nil, errors.New("incompatible network & raddr")
+		}
+
 		p.memu.RLock()
 		defer p.memu.RUnlock()
 		listeners = p.memu.cache

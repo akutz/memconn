@@ -1,4 +1,4 @@
-// +build go1.10,!mpipe
+// +build go1.10
 
 package memconn
 

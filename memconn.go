@@ -27,7 +27,7 @@ func Listen(network, addr string) (net.Listener, error) {
 // ListenMem begins listening at laddr.
 // Known networks are "memu" (memconn unbuffered).
 // If laddr is nil then ListenMem listens on "localhost" on the
-// "memu" (unbuffered) network.
+// specified network.
 func ListenMem(network string, laddr *Addr) (net.Listener, error) {
 	return provider.ListenMem(network, laddr)
 }
@@ -42,8 +42,8 @@ func Dial(network, addr string) (net.Conn, error) {
 // Known networks are "memu" (memconn unbuffered).
 // If laddr is nil then a new, unique local address is generated
 // using a UUID.
-// If raddr is nil then the named, unbuffered endpoint "localhost"
-// is used.
+// If raddr is nil then the "localhost" endpoint is used on the
+// specified network.
 func DialMem(network string, laddr, raddr *Addr) (net.Conn, error) {
 	return provider.DialMem(network, laddr, raddr)
 }
