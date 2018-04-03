@@ -31,6 +31,12 @@ func (p *Provider) Listen(network, addr string) (net.Listener, error) {
 	}
 }
 
+type errAddrUnavailable struct{}
+
+func (e errAddrUnavailable) Error() string {
+	return "addr unavailable"
+}
+
 // ListenMem begins listening at laddr.
 // Known networks are "memu" (memconn unbuffered).
 // If laddr is nil then ListenMem listens on "localhost" on the
@@ -81,15 +87,19 @@ func (p *Provider) ListenMem(
 	}
 
 	if _, ok := listeners[laddr.Name]; ok {
-		return nil, fmt.Errorf(
-			"addr in use: network=%s, addr=%s", network, laddr.Name)
+		return nil, &net.OpError{
+			Addr:   laddr,
+			Source: laddr,
+			Net:    network,
+			Err:    errAddrUnavailable{},
+		}
 	}
 
 	c := &listener{
-		addr:        *laddr,
-		rcvr:        make(chan net.Conn, 1),
-		onClose:     onClose,
-		activeCnxns: map[string]func() error{},
+		addr:    *laddr,
+		done:    make(chan struct{}),
+		rcvr:    make(chan net.Conn, 1),
+		onClose: onClose,
 	}
 
 	listeners[laddr.Name] = c
@@ -144,8 +154,8 @@ func (p *Provider) DialMem(
 		return nil, errUnknownNetwork(network)
 	}
 
-	if c, ok := listeners[raddr.Name]; ok {
-		return c.dial(network, *laddr, *raddr)
+	if l, ok := listeners[raddr.Name]; ok {
+		return l.dial(network, *laddr, *raddr)
 	}
 
 	return nil, fmt.Errorf(

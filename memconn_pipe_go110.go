@@ -14,3 +14,12 @@ import (
 func Pipe() (net.Conn, net.Conn) {
 	return net.Pipe()
 }
+
+func isClosedChan(c <-chan struct{}) bool {
+	select {
+	case <-c:
+		return true
+	default:
+		return false
+	}
+}
