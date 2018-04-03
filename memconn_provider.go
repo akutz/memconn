@@ -5,8 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
-
-	"github.com/google/uuid"
+	"time"
 )
 
 // Provider is used to track named MemConn objects.
@@ -133,7 +132,7 @@ func (p *Provider) DialMem(
 		// If laddr is not specified then create one using a UUID as
 		// the client address name.
 		if laddr == nil {
-			laddr = &Addr{Name: uuid.New().String()}
+			laddr = &Addr{Name: fmt.Sprintf("%d", time.Now().UnixNano())}
 		}
 		// If raddr is not specified then set it to the reserved name
 		// "localhost".
