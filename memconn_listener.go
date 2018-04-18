@@ -1,18 +1,22 @@
 package memconn
 
 import (
+	"context"
+	"errors"
 	"net"
 )
 
+// listener implements the net.Listener interface.
 type listener struct {
-	addr    Addr
-	rcvr    chan net.Conn
-	onClose func()
-	done    chan struct{}
+	addr Addr
+	rcvr chan net.Conn
+	done chan struct{}
 }
 
-func (l *listener) dial(
-	network string, laddr, raddr Addr) (net.Conn, error) {
+func (l listener) dial(
+	ctx context.Context,
+	network string,
+	laddr, raddr Addr) (net.Conn, error) {
 
 	// Get two, connected net.Conn objects.
 	local, remote := Pipe()
@@ -25,12 +29,12 @@ func (l *listener) dial(
 	//     have their internal OpError addr information replaced with
 	//     the correct address information.
 	//   * A channel can be setup to cause the event of the Listener
-	//     closing closes the remoteWrapper immediately.
-	localWrapper, remoteWrapper := &pipeWrapper{
+	//     closing closes the remoteConn immediately.
+	localConn, remoteConn := &Conn{
 		Conn:       local,
 		localAddr:  laddr,
 		remoteAddr: raddr,
-	}, &pipeWrapper{
+	}, &Conn{
 		Conn:       remote,
 		localAddr:  raddr,
 		remoteAddr: laddr,
@@ -40,45 +44,58 @@ func (l *listener) dial(
 	// as soon as the listener's done channel is no longer blocked.
 	go func() {
 		<-l.done
-		remoteWrapper.Close()
+		remoteConn.Close()
 	}()
 
-	// Announce a new connection.
-	go func() {
-		l.rcvr <- remoteWrapper
-	}()
-
-	return localWrapper, nil
-}
-
-type errListenerClosed struct{}
-
-func (e errListenerClosed) Error() string {
-	return "closed"
-}
-
-func (l *listener) Accept() (net.Conn, error) {
-	if !isClosedChan(l.done) {
-		for serverWrapper := range l.rcvr {
-			return serverWrapper, nil
+	// Announce a new connection by placing the new remoteConn
+	// onto the rcvr channel. An Accept call from this listener will
+	// remove the remoteConn from the channel. However, if that does
+	// not occur by the time the context times out / is cancelled, then
+	// an error is returned.
+	select {
+	case l.rcvr <- remoteConn:
+		return localConn, nil
+	case <-ctx.Done():
+		localConn.Close()
+		remoteConn.Close()
+		return nil, &net.OpError{
+			Addr:   raddr,
+			Source: laddr,
+			Net:    network,
+			Op:     "dial",
+			Err:    ctx.Err(),
 		}
-		// Notify pending remote endpoints that the listener is closed
-		// and that all pending operations should be unblocked.
+	}
+}
+
+// Accept implements the net.Listener Accept method.
+func (l listener) Accept() (net.Conn, error) {
+	// Loop until a new connection is received from the
+	// rcvr channel or until the listener is closed.
+	for {
+		select {
+		case remoteConn := <-l.rcvr:
+			return remoteConn, nil
+		case <-l.done:
+			return nil, &net.OpError{
+				Addr:   l.addr,
+				Source: l.addr,
+				Net:    l.addr.Network(),
+				Err:    errors.New("listener closed"),
+			}
+		}
+	}
+}
+
+// Close implements the net.Listener Close method.
+func (l listener) Close() error {
+	if !isClosedChan(l.done) {
 		close(l.done)
 	}
-	return nil, &net.OpError{
-		Addr:   l.addr,
-		Source: l.addr,
-		Net:    l.addr.Network(),
-		Err:    errListenerClosed{},
-	}
-}
-
-func (l *listener) Close() error {
-	l.onClose()
 	return nil
 }
 
-func (l *listener) Addr() net.Addr {
+// Addr implements the net.Listener Addr method.
+func (l listener) Addr() net.Addr {
 	return l.addr
 }
