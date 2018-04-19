@@ -23,6 +23,19 @@ const (
 // package-level functions interact with this object.
 var provider Provider
 
+// MapNetwork enables mapping the network value provided to this Provider's
+// Dial and Listen functions from the specified "from" value to the
+// specified "to" value.
+//
+// For example, calling MapNetwork("tcp", "memu") means a subsequent
+// Dial("tcp", "address") gets translated to Dial("memu", "address").
+//
+// Calling MapNetwork("tcp", "") removes any previous translation for
+// the "tcp" network.
+func MapNetwork(from, to string) {
+	provider.MapNetwork(from, to)
+}
+
 // Listen begins listening at addr for the specified network.
 //
 // Known networks are "memu" (memconn unbuffered).
@@ -56,15 +69,15 @@ func Dial(network, address string) (net.Conn, error) {
 	return provider.Dial(network, address)
 }
 
-// DialWithContext dials a named connection using a
+// DialContext dials a named connection using a
 // Go context to provide timeout behavior.
 //
 // Please see Dial for more information.
-func DialWithContext(
+func DialContext(
 	ctx context.Context,
 	network, addr string) (net.Conn, error) {
 
-	return provider.DialWithContext(ctx, network, addr)
+	return provider.DialContext(ctx, network, addr)
 }
 
 // DialMem dials a named connection.
@@ -81,14 +94,14 @@ func DialMem(network string, laddr, raddr *Addr) (net.Conn, error) {
 	return provider.DialMem(network, laddr, raddr)
 }
 
-// DialMemWithContext dials a named connection using a
+// DialMemContext dials a named connection using a
 // Go context to provide timeout behavior.
 //
 // Please see DialMem for more information.
-func DialMemWithContext(
+func DialMemContext(
 	ctx context.Context,
 	network string,
 	laddr, raddr *Addr) (net.Conn, error) {
 
-	return provider.DialMemWithContext(ctx, network, laddr, raddr)
+	return provider.DialMemContext(ctx, network, laddr, raddr)
 }

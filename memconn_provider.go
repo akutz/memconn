@@ -12,11 +12,48 @@ import (
 // Provider is used to track named MemConn objects.
 type Provider struct {
 	memu listenerCache
+	nets networkMap
 }
 
 type listenerCache struct {
 	sync.RWMutex
 	cache map[string]listener
+}
+
+type networkMap struct {
+	sync.RWMutex
+	cache map[string]string
+}
+
+// MapNetwork enables mapping the network value provided to this Provider's
+// Dial and Listen functions from the specified "from" value to the
+// specified "to" value.
+//
+// For example, calling MapNetwork("tcp", "memu") means a subsequent
+// Dial("tcp", "address") gets translated to Dial("memu", "address").
+//
+// Calling MapNetwork("tcp", "") removes any previous translation for
+// the "tcp" network.
+func (p *Provider) MapNetwork(from, to string) {
+	p.nets.Lock()
+	defer p.nets.Unlock()
+	if p.nets.cache == nil {
+		p.nets.cache = map[string]string{}
+	}
+	if to == "" {
+		delete(p.nets.cache, from)
+		return
+	}
+	p.nets.cache[from] = to
+}
+
+func (p *Provider) mapNetwork(network string) string {
+	p.nets.RLock()
+	defer p.nets.RUnlock()
+	if to, ok := p.nets.cache[network]; ok {
+		return to
+	}
+	return network
 }
 
 // Listen begins listening at addr for the specified network.
@@ -29,7 +66,7 @@ type listenerCache struct {
 // When the provided network is unknown the operation defers to
 // net.Dial.
 func (p *Provider) Listen(network, addr string) (net.Listener, error) {
-	switch network {
+	switch p.mapNetwork(network) {
 	case networkMemu:
 		return p.ListenMem(network, &Addr{Name: addr})
 	default:
@@ -48,7 +85,7 @@ func (p *Provider) ListenMem(
 
 	var listeners map[string]listener
 
-	switch network {
+	switch p.mapNetwork(network) {
 	case networkMemu:
 		// If laddr is not specified then set it to the reserved name
 		// "localhost".
@@ -121,7 +158,7 @@ func (p *Provider) ListenMem(
 // When the provided network is unknown the operation defers to
 // net.Dial.
 func (p *Provider) Dial(network, addr string) (net.Conn, error) {
-	return p.DialWithContext(defaultCtx, network, addr)
+	return p.DialContext(defaultCtx, network, addr)
 }
 
 // DialMem dials a named connection.
@@ -137,22 +174,22 @@ func (p *Provider) Dial(network, addr string) (net.Conn, error) {
 func (p *Provider) DialMem(
 	network string, laddr, raddr *Addr) (net.Conn, error) {
 
-	return p.DialMemWithContext(defaultCtx, network, laddr, raddr)
+	return p.DialMemContext(defaultCtx, network, laddr, raddr)
 }
 
 var defaultCtx = context.Background()
 
-// DialWithContext dials a named connection using a
+// DialContext dials a named connection using a
 // Go context to provide timeout behavior.
 //
 // Please see Dial for more information.
-func (p *Provider) DialWithContext(
+func (p *Provider) DialContext(
 	ctx context.Context,
 	network, addr string) (net.Conn, error) {
 
-	switch network {
+	switch p.mapNetwork(network) {
 	case networkMemu:
-		return p.DialMemWithContext(ctx, network, nil, &Addr{Name: addr})
+		return p.DialMemContext(ctx, network, nil, &Addr{Name: addr})
 	default:
 		if ctx == nil {
 			return net.Dial(network, addr)
@@ -161,18 +198,18 @@ func (p *Provider) DialWithContext(
 	}
 }
 
-// DialMemWithContext dials a named connection using a
+// DialMemContext dials a named connection using a
 // Go context to provide timeout behavior.
 //
 // Please see DialMem for more information.
-func (p *Provider) DialMemWithContext(
+func (p *Provider) DialMemContext(
 	ctx context.Context,
 	network string,
 	laddr, raddr *Addr) (net.Conn, error) {
 
 	var listeners map[string]listener
 
-	switch network {
+	switch p.mapNetwork(network) {
 	case networkMemu:
 		// If laddr is not specified then create one with the current
 		// epoch in nanoseconds. This value need not be unique.
