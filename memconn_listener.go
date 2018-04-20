@@ -89,7 +89,11 @@ func (l listener) Accept() (net.Conn, error) {
 
 // Close implements the net.Listener Close method.
 func (l listener) Close() error {
-	if !isClosedChan(l.done) {
+	select {
+	case <-l.done:
+		// Already closed
+	default:
+		// Still open, close it
 		close(l.done)
 	}
 	return nil
