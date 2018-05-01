@@ -1,14 +1,29 @@
-// +build !go1.10
-
-// Copyright 2010 The Go Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+// This file was copied from Go stdlib "net/pipe.go"
+// and modified in order to optimally support:
+//
+//     * Buffered writes
+//     * Custom local and remote address values
+//     * Error values that follow net.Conn's rules regarding
+//       net.OpError
+//
+// The above features could be implemented using the "net.Conn" values
+// returned from the function "net.Pipe", but much of the same code
+// would need to be duplicated regarding deadlines, done semantics, etc.
+// Using the private "pipe" struct as the basis of a new, composite type
+// is much more performant.
+//
+// FYI, the reason a new, composite type is used instead of modifying
+// the existing type, "pipe", is to make it easier to replace this
+// file with whatever changes Go stdlib make make to "net/pipe.go" in
+// the future.
+//
+// This file is a Golang stdlib type and so the Go license is included:
+//
+//     Copyright 2010 The Go Authors. All rights reserved.
+//     Use of this source code is governed by a BSD-style
+//     license that can be found in the LICENSE file.
 
 package memconn
-
-// This file was copied from Go stdlib "net/pipe.go" in
-// order to support the "net.Conn" deadline semantics
-// for pipes in versions of Go earlier than 1.10.
 
 import (
 	"io"

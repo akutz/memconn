@@ -11,13 +11,13 @@ import (
 
 // Provider is used to track named MemConn objects.
 type Provider struct {
-	memu listenerCache
-	nets networkMap
+	nets      networkMap
+	listeners listenerCache
 }
 
 type listenerCache struct {
 	sync.RWMutex
-	cache map[string]listener
+	cache map[string]*Listener
 }
 
 type networkMap struct {
@@ -56,62 +56,42 @@ func (p *Provider) mapNetwork(network string) string {
 	return network
 }
 
-// Listen begins listening at addr for the specified network.
+// Listen begins listening at address for the specified network.
 //
-// Known networks are "memu" (memconn unbuffered).
+// Known networks are "memb" (memconn buffered) and "memu" (memconn unbuffered).
 //
 // When the specified address is already in use on the specified
 // network an error is returned.
 //
 // When the provided network is unknown the operation defers to
 // net.Dial.
-func (p *Provider) Listen(network, addr string) (net.Listener, error) {
+func (p *Provider) Listen(network, address string) (net.Listener, error) {
 	switch p.mapNetwork(network) {
-	case networkMemu:
-		return p.ListenMem(network, &Addr{Name: addr})
+	case networkMemb, networkMemu:
+		return p.ListenMem(
+			network, &Addr{Name: address, network: network})
 	default:
-		return net.Listen(network, addr)
+		return net.Listen(network, address)
 	}
 }
 
 // ListenMem begins listening at laddr.
 //
-// Known networks are "memu" (memconn unbuffered).
+// Known networks are "memb" (memconn buffered) and "memu" (memconn unbuffered).
 //
 // If laddr is nil then ListenMem listens on "localhost" on the
 // specified network.
-func (p *Provider) ListenMem(
-	network string, laddr *Addr) (net.Listener, error) {
-
-	var listeners map[string]listener
+func (p *Provider) ListenMem(network string, laddr *Addr) (*Listener, error) {
 
 	switch p.mapNetwork(network) {
-	case networkMemu:
+	case networkMemb, networkMemu:
 		// If laddr is not specified then set it to the reserved name
 		// "localhost".
 		if laddr == nil {
-			laddr = &Addr{Name: addrLocalhost}
+			laddr = &Addr{Name: addrLocalhost, network: network}
+		} else {
+			laddr.network = network
 		}
-
-		// Verify that network is compatible with laddr.
-		if laddr.Buffered {
-			return nil, &net.OpError{
-				Addr:   laddr,
-				Source: laddr,
-				Net:    network,
-				Op:     "listen",
-				Err:    errors.New("incompatible network & local address"),
-			}
-		}
-
-		p.memu.Lock()
-		defer p.memu.Unlock()
-
-		if p.memu.cache == nil {
-			p.memu.cache = map[string]listener{}
-		}
-
-		listeners = p.memu.cache
 	default:
 		return nil, &net.OpError{
 			Addr:   laddr,
@@ -122,7 +102,14 @@ func (p *Provider) ListenMem(
 		}
 	}
 
-	if _, ok := listeners[laddr.Name]; ok {
+	p.listeners.Lock()
+	defer p.listeners.Unlock()
+
+	if p.listeners.cache == nil {
+		p.listeners.cache = map[string]*Listener{}
+	}
+
+	if _, ok := p.listeners.cache[laddr.Name]; ok {
 		return nil, &net.OpError{
 			Addr:   laddr,
 			Source: laddr,
@@ -132,38 +119,40 @@ func (p *Provider) ListenMem(
 		}
 	}
 
-	l := listener{
+	l := &Listener{
 		addr: *laddr,
 		done: make(chan struct{}),
-		rcvr: make(chan net.Conn, 1),
+		rmvd: make(chan struct{}),
+		rcvr: make(chan *Conn, 1),
 	}
 
 	// Start a goroutine that removes the listener from
 	// the cache once the listener is closed.
 	go func() {
 		<-l.done
-		p.memu.Lock()
-		defer p.memu.Unlock()
-		delete(listeners, laddr.Name)
+		p.listeners.Lock()
+		defer p.listeners.Unlock()
+		delete(p.listeners.cache, laddr.Name)
+		close(l.rmvd)
 	}()
 
-	listeners[laddr.Name] = l
+	p.listeners.cache[laddr.Name] = l
 	return l, nil
 }
 
 // Dial dials a named connection.
 //
-// Known networks are "memu" (memconn unbuffered).
+// Known networks are "memb" (memconn buffered) and "memu" (memconn unbuffered).
 //
 // When the provided network is unknown the operation defers to
 // net.Dial.
-func (p *Provider) Dial(network, addr string) (net.Conn, error) {
-	return p.DialContext(defaultCtx, network, addr)
+func (p *Provider) Dial(network, address string) (net.Conn, error) {
+	return p.DialContext(nil, network, address)
 }
 
 // DialMem dials a named connection.
 //
-// Known networks are "memu" (memconn unbuffered).
+// Known networks are "memb" (memconn buffered) and "memu" (memconn unbuffered).
 //
 // If laddr is nil then a new address is generated using
 // time.Now().UnixNano(). Please note that client addresses are
@@ -172,12 +161,10 @@ func (p *Provider) Dial(network, addr string) (net.Conn, error) {
 // If raddr is nil then the "localhost" endpoint is used on the
 // specified network.
 func (p *Provider) DialMem(
-	network string, laddr, raddr *Addr) (net.Conn, error) {
+	network string, laddr, raddr *Addr) (*Conn, error) {
 
-	return p.DialMemContext(defaultCtx, network, laddr, raddr)
+	return p.DialMemContext(nil, network, laddr, raddr)
 }
-
-var defaultCtx = context.Background()
 
 // DialContext dials a named connection using a
 // Go context to provide timeout behavior.
@@ -185,16 +172,20 @@ var defaultCtx = context.Background()
 // Please see Dial for more information.
 func (p *Provider) DialContext(
 	ctx context.Context,
-	network, addr string) (net.Conn, error) {
+	network, address string) (net.Conn, error) {
 
 	switch p.mapNetwork(network) {
-	case networkMemu:
-		return p.DialMemContext(ctx, network, nil, &Addr{Name: addr})
+	case networkMemb, networkMemu:
+		return p.DialMemContext(
+			ctx, network, nil, &Addr{
+				Name:    address,
+				network: network,
+			})
 	default:
 		if ctx == nil {
-			return net.Dial(network, addr)
+			return net.Dial(network, address)
 		}
-		return (&net.Dialer{}).DialContext(ctx, network, addr)
+		return (&net.Dialer{}).DialContext(ctx, network, address)
 	}
 }
 
@@ -205,46 +196,25 @@ func (p *Provider) DialContext(
 func (p *Provider) DialMemContext(
 	ctx context.Context,
 	network string,
-	laddr, raddr *Addr) (net.Conn, error) {
-
-	var listeners map[string]listener
+	laddr, raddr *Addr) (*Conn, error) {
 
 	switch p.mapNetwork(network) {
-	case networkMemu:
+	case networkMemb, networkMemu:
 		// If laddr is not specified then create one with the current
 		// epoch in nanoseconds. This value need not be unique.
 		if laddr == nil {
-			laddr = &Addr{Name: fmt.Sprintf("%d", time.Now().UnixNano())}
+			laddr = &Addr{
+				Name:    fmt.Sprintf("%d", time.Now().UnixNano()),
+				network: network,
+			}
+		} else {
+			laddr.network = network
 		}
-
-		// If raddr is not specified then set it to the reserved name
-		// "localhost".
 		if raddr == nil {
-			raddr = &Addr{Name: addrLocalhost}
+			raddr = &Addr{Name: addrLocalhost, network: network}
+		} else {
+			raddr.network = network
 		}
-
-		if laddr.Buffered {
-			return nil, &net.OpError{
-				Addr:   raddr,
-				Source: laddr,
-				Net:    network,
-				Op:     "dial",
-				Err:    errors.New("incompatible network & local address"),
-			}
-		}
-		if raddr.Buffered {
-			return nil, &net.OpError{
-				Addr:   raddr,
-				Source: laddr,
-				Net:    network,
-				Op:     "dial",
-				Err:    errors.New("incompatible network & remote address"),
-			}
-		}
-
-		p.memu.RLock()
-		defer p.memu.RUnlock()
-		listeners = p.memu.cache
 	default:
 		return nil, &net.OpError{
 			Addr:   raddr,
@@ -255,11 +225,13 @@ func (p *Provider) DialMemContext(
 		}
 	}
 
-	if ctx == nil {
-		ctx = defaultCtx
-	}
+	p.listeners.RLock()
+	defer p.listeners.RUnlock()
 
-	if l, ok := listeners[raddr.Name]; ok {
+	if l, ok := p.listeners.cache[raddr.Name]; ok {
+		// Update the provided raddr with the actual network type used
+		// by the listener.
+		raddr.network = l.addr.network
 		return l.dial(ctx, network, *laddr, *raddr)
 	}
 

@@ -1,3 +1,5 @@
+SHELL := /bin/bash
+
 all: build
 
 build: memconn.a

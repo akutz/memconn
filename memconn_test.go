@@ -31,12 +31,29 @@ func TestMemuRace(t *testing.T) {
 		p := &memconn.Provider{}
 		addr := strconv.Itoa(i)
 		go func(p *memconn.Provider, addr string) {
-			if c, _ := p.Listen("memu", addr); c != nil {
+			if c, err := p.Listen("memu", addr); err == nil {
 				go c.Accept()
 			}
 		}(p, addr)
 		go func(p *memconn.Provider, addr string) {
-			if c, _ := p.Dial("memu", addr); c != nil {
+			if c, err := p.Dial("memu", addr); err == nil {
+				c.Close()
+			}
+		}(p, addr)
+	}
+}
+
+func TestMembRace(t *testing.T) {
+	for i := 0; i < 1000; i++ {
+		p := &memconn.Provider{}
+		addr := strconv.Itoa(i)
+		go func(p *memconn.Provider, addr string) {
+			if c, err := p.Listen("memb", addr); err == nil {
+				go c.Accept()
+			}
+		}(p, addr)
+		go func(p *memconn.Provider, addr string) {
+			if c, err := p.Dial("memb", addr); err == nil {
 				c.Close()
 			}
 		}(p, addr)
@@ -46,29 +63,47 @@ func TestMemuRace(t *testing.T) {
 // TestMemuNoDeadline validates that the memu connection properly implements
 // the net.Conn interface's deadline semantics.
 func TestMemuNoDeadline(t *testing.T) {
-	testMemuDeadline(t, 0, 0)
+	testMemConnDeadline(t, "memu", 0, 0)
+}
+
+func TestMembNoDeadline(t *testing.T) {
+	testMemConnDeadline(t, "memb", 0, 0)
 }
 
 // TestMemuDeadline validates that the memu connection properly implements
 // the net.Conn interface's deadline semantics.
 func TestMemuDeadline(t *testing.T) {
-	testMemuDeadline(
-		t, time.Duration(3)*time.Second, time.Duration(3)*time.Second)
+	testMemConnDeadline(
+		t, "memu", time.Duration(3)*time.Second, time.Duration(3)*time.Second)
+}
+
+func TestMembDeadline(t *testing.T) {
+	testMemConnDeadline(
+		t, "memb", time.Duration(3)*time.Second, time.Duration(3)*time.Second)
 }
 
 // TestMemuWriteDeadline validates that the memu connection properly implements
 // the net.Conn interface's write deadline semantics.
 func TestMemuWriteDeadline(t *testing.T) {
-	testMemuDeadline(t, time.Duration(3)*time.Second, 0)
+	testMemConnDeadline(t, "memu", time.Duration(3)*time.Second, 0)
+}
+
+func TestMembWriteDeadline(t *testing.T) {
+	testMemConnDeadline(t, "memb", time.Duration(3)*time.Second, 0)
 }
 
 // TestMemuReadDeadline validates that the memu connection properly implements
 // the net.Conn interface's read deadline semantics.
 func TestMemuReadDeadline(t *testing.T) {
-	testMemuDeadline(t, 0, time.Duration(3)*time.Second)
+	testMemConnDeadline(t, "memu", 0, time.Duration(3)*time.Second)
 }
 
-func testMemuDeadline(t *testing.T, write, read time.Duration) {
+func TestMembReadDeadline(t *testing.T) {
+	testMemConnDeadline(t, "memb", 0, time.Duration(3)*time.Second)
+}
+
+func testMemConnDeadline(
+	t *testing.T, network string, write, read time.Duration) {
 
 	var (
 		serverReadDeadline  time.Duration
@@ -133,6 +168,11 @@ func testMemuDeadline(t *testing.T, write, read time.Duration) {
 }
 
 const parallelTests = 100
+
+func TestMemb(t *testing.T) {
+	lis := serve(t, memconn.Listen, "memb", t.Name(), 0, 0, true)
+	testNetConnParallel(t, lis, memconn.Dial)
+}
 
 func TestMemu(t *testing.T) {
 	lis := serve(t, memconn.Listen, "memu", t.Name(), 0, 0, true)
@@ -236,9 +276,11 @@ func serve(
 		logger.Fatalf("error serving %s:%s: %v", network, addr, err)
 	}
 
-	logger.Logf("serving %s:%s",
-		lis.Addr().Network(),
-		lis.Addr().String())
+	if testing.Verbose() {
+		logger.Logf("serving %s:%s",
+			lis.Addr().Network(),
+			lis.Addr().String())
+	}
 
 	go func() {
 		for {
@@ -308,12 +350,12 @@ func writeAndReadTestData(
 	}
 
 	// Read the response and assert that it matches what was sent.
-	rbuf := make([]byte, dataLen)
-	if n, err := client.Read(rbuf); err != nil {
+	rbuf := &bytes.Buffer{}
+	if n, err := io.CopyN(rbuf, client, dataLen); err != nil {
 		logger.Fatal(err)
 	} else if n != dataLen {
 		logger.Fatalf("read != %d bytes: %d", dataLen, n)
-	} else if !bytes.Equal(rbuf, wbuf) {
-		logger.Fatalf("read != write: rbuf=%v, wbuf=%v", rbuf, wbuf)
+	} else if rbytes := rbuf.Bytes(); !bytes.Equal(rbytes, wbuf) {
+		logger.Fatalf("read != write: rbuf=%v, wbuf=%v", rbytes, wbuf)
 	}
 }

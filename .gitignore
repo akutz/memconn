@@ -1,6 +1,10 @@
 *.a
 *.out
 *.test
+*.stderr
+*.stdout
+*.log
+.vscode/
 
 # Created by https://www.gitignore.io
 
