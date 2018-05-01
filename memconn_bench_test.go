@@ -10,6 +10,27 @@ import (
 	"github.com/akutz/memconn"
 )
 
+func BenchmarkMemb(b *testing.B) {
+	addr := fmt.Sprintf("%d", time.Now().UnixNano())
+	lis := serve(b, memconn.Listen, "memb", addr, 0, 0, false)
+	benchmarkNetConnParallel(b, lis, memconn.Dial)
+}
+
+func BenchmarkMembWithDeadline(b *testing.B) {
+	laddr := fmt.Sprintf("%d", time.Now().UnixNano())
+	lis := serve(b, memconn.Listen, "memb", laddr, 0, 0, false)
+	benchmarkNetConnParallel(b, lis,
+		func(network, addr string) (net.Conn, error) {
+			client, err := memconn.Dial(network, addr)
+			if err != nil {
+				return nil, err
+			}
+			deadline := time.Now().Add(time.Duration(1) * time.Minute)
+			client.SetDeadline(deadline)
+			return client, nil
+		})
+}
+
 func BenchmarkMemu(b *testing.B) {
 	addr := fmt.Sprintf("%d", time.Now().UnixNano())
 	lis := serve(b, memconn.Listen, "memu", addr, 0, 0, false)

@@ -2,20 +2,21 @@ package memconn
 
 // Addr represents the address of an in-memory endpoint.
 type Addr struct {
-	// Buffered indicates whether or not the endpoint is
-	// buffered.
-	Buffered bool
-
 	// Name is the name of the endpoint.
 	Name string
+
+	network string
 }
 
-// Network returns the address's network type.
+// Buffered indicates whether or not the address refers to a buffered
+// network type.
+func (a Addr) Buffered() bool {
+	return a.network == networkMemb
+}
+
+// Network returns the address's network.
 func (a Addr) Network() string {
-	if !a.Buffered {
-		return networkMemu
-	}
-	return networkMemb
+	return a.network
 }
 
 // String returns the address's name.
