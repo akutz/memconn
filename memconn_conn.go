@@ -179,7 +179,8 @@ func (c *Conn) CloseTimeout() time.Duration {
 // to determine the amount of time to wait for pending, buffered Writes
 // to complete before closing the connection.
 //
-// The default timeout value is 10 seconds.
+// The default timeout value is 10 seconds. A zero value does not
+// mean there is no timeout, rather it means the timeout is immediate.
 //
 // Please note that setting this value has no effect on unbuffered
 // connections.
@@ -243,30 +244,42 @@ func (c *Conn) RemoteAddr() net.Addr {
 // Close implements the net.Conn Close method.
 func (c *Conn) Close() error {
 	c.pipe.once.Do(func() {
+
+		// Buffered connections will attempt to wait until all
+		// pending Writes are completed, until the specified
+		// timeout value has elapsed, or until the remote side
+		// of the connection is closed.
 		if c.laddr.Buffered() {
-			// Buffered connections will attempt to wait until all
-			// pending Writes are completed or until the specified
-			// timeout value has elapsed.
 			c.buf.mu.RLock()
 			timeout := c.buf.closeTimeout
 			c.buf.mu.RUnlock()
 
-			// If there's a tiemout set then wait until either it
-			// elapses or the number of pending bytes is zero.
-			if timeout > 0 {
-				done := make(chan struct{})
-				go func() {
-					c.buf.cond.L.Lock()
-					for c.buf.cur > 0 {
-						c.buf.cond.Wait()
-					}
-					close(done)
-					c.buf.cond.L.Unlock()
-				}()
-				select {
-				case <-done:
-				case <-time.After(timeout):
+			// Set up a channel that is closed when the specified
+			// timer elapses.
+			timeoutDone := make(chan struct{})
+			if timeout == 0 {
+				close(timeoutDone)
+			} else {
+				time.AfterFunc(timeout, func() { close(timeoutDone) })
+			}
+
+			// Set up a channel that is closed when the number of
+			// pending bytes is zero.
+			writesDone := make(chan struct{})
+			go func() {
+				c.buf.cond.L.Lock()
+				for c.buf.cur > 0 {
+					c.buf.cond.Wait()
 				}
+				close(writesDone)
+				c.buf.cond.L.Unlock()
+			}()
+
+			// Wait to close the connection.
+			select {
+			case <-writesDone:
+			case <-timeoutDone:
+			case <-c.pipe.remoteDone:
 			}
 		}
 
