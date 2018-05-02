@@ -450,7 +450,7 @@ var logReadOrWriteHeaderOnce sync.Once
 func (c *connLogger) logReadOrWrite(op string, n int, b []byte) func(error) {
 
 	logReadOrWriteHeaderOnce.Do(func() {
-		log("SRC RW ID  LEN_DAT HASH_DAT LEN_BUF HASH_BUF BUF\n")
+		log_("SRC RW ID  LEN_DAT HASH_DAT LEN_BUF HASH_BUF BUF\n")
 	})
 
 	rtype := "LOC"
@@ -497,17 +497,17 @@ func (c *connLogger) logReadOrWrite(op string, n int, b []byte) func(error) {
 		szB = szB + " ...]"
 	}
 
-	log(patt+"\n", rtype, op, id, n, hashDat, len(b), hashBuf, szB)
+	log_(patt+"\n", rtype, op, id, n, hashDat, len(b), hashBuf, szB)
 
 	return func(err error) {
 		if err != nil {
-			log(patt+" err=%v\n",
+			log_(patt+" err=%v\n",
 				rtype, op, id, n, hashDat, len(b), hashBuf, szB, err)
 		}
 	}
 }
 
-func log(msg string, args ...interface{}) {
+func log_(msg string, args ...interface{}) {
 	if !debug {
 		return
 	}
