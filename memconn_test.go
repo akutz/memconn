@@ -294,8 +294,16 @@ func serve(
 				}
 				buf := make([]byte, dataLen)
 				_, err := c.Read(buf)
-				if err != nil && err != io.ErrClosedPipe && err != io.EOF {
-					logger.Fatal(err)
+				if err != nil {
+					fatal := true
+					if e, ok := err.(*net.OpError); ok {
+						if e.Err == io.EOF || e.Err == io.ErrClosedPipe {
+							fatal = false
+						}
+					}
+					if fatal {
+						logger.Fatal(err)
+					}
 				}
 				//if n != dataLen {
 				//	logger.Fatalf("read != %d bytes: %d", dataLen, n)
