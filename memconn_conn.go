@@ -95,7 +95,7 @@ func makeNewConns(network string, laddr, raddr Addr) (*Conn, *Conn) {
 	if laddr.Buffered() {
 		local.buf = &bufConn{
 			errs:         make(chan error),
-			closeTimeout: 10 * time.Second,
+			closeTimeout: 0 * time.Second,
 		}
 		local.buf.cond.L = &local.buf.mu
 	}
@@ -357,7 +357,10 @@ func (c *Conn) writeAsync(b []byte) (int, error) {
 	// Perform a synchronous Write if the connection has a non-zero
 	// value for the maximum allowed buffer size and if the size of
 	// the payload exceeds that maximum value.
-	if c.buf.max > 0 && uint64(len(b)) > c.buf.max {
+	c.buf.mu.RLock()
+	doSync := c.buf.max > 0 && uint64(len(b)) > c.buf.max
+	c.buf.mu.RUnlock()
+	if doSync {
 		return c.writeSync(b)
 	}
 
