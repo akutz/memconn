@@ -33,10 +33,6 @@ func Example_bufferedTLS() {
 	go func() {
 		conn, _ := lis.Accept()
 
-		// Copy-on-write is required because TLS is being used with a
-		// buffered connection.
-		conn.(*memconn.Conn).SetCopyOnWrite(true)
-
 		// Wrap the new connection inside of a TLS server.
 		conn = tls.Server(conn, &tls.Config{
 			Certificates: []tls.Certificate{hostKeyPair},
@@ -52,10 +48,6 @@ func Example_bufferedTLS() {
 
 	// Dial the buffered, in-memory network named "localhost".
 	conn, _ := memconn.Dial("memb", "localhost")
-
-	// Copy-on-write is required because TLS is being used with a
-	// buffered connection.
-	conn.(*memconn.Conn).SetCopyOnWrite(true)
 
 	// Wrap the connection in TLS. It's necessary to set the "ServerName"
 	// field in the TLS configuration in order to match one of the host
