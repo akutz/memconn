@@ -3,199 +3,153 @@ package memconn_test
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math/rand"
 	"net"
 	"net/http"
-	"os"
-	"strconv"
-	"sync"
-	"sync/atomic"
 	"testing"
 
 	"github.com/akutz/memconn"
 )
 
-func TestTLS_Memu(t *testing.T) {
-	testTLS(t, "memu", "localhost", true)
+func TestBufferedTLS(t *testing.T) {
+	testParallelTLS(t, "memb")
 }
 
-func TestTLS_Memu_NoTLS(t *testing.T) {
-	testTLS(t, "memu", "localhost", false)
+func TestUnbufferedTLS(t *testing.T) {
+	testParallelTLS(t, "memu")
 }
 
-func TestTLS_Memb(t *testing.T) {
-	testTLS(t, "memb", "localhost", true)
-}
+func testParallelTLS(t *testing.T, network string) {
 
-func TestTLS_Memb_NoTLS(t *testing.T) {
-	testTLS(t, "memb", "localhost", false)
-}
-
-func TestTLS_TCP(t *testing.T) {
-	testTLS(t, "tcp", "localhost:9669", true)
-}
-
-func TestTLS_TCP_NoTLS(t *testing.T) {
-	testTLS(t, "tcp", "localhost:9669", false)
-}
-
-func TestTLS_UNIX(t *testing.T) {
-	os.RemoveAll(".tls.sock")
-	testTLS(t, "unix", ".tls.sock", true)
-}
-
-func TestTLS_UNIX_NoTLS(t *testing.T) {
-	os.RemoveAll(".tls.sock")
-	testTLS(t, "unix", ".tls.sock", false)
-}
-
-var opCounter uint64
-
-func testTLS(t *testing.T, network, address string, useTLS bool) {
-
-	var (
-		lis         net.Listener
-		rootCAs     *x509.CertPool
-		hostKeyPair tls.Certificate
-	)
-
-	if useTLS {
-		// Create the cert pool for the CA.
-		rootCAs = x509.NewCertPool()
-		if !rootCAs.AppendCertsFromPEM([]byte(caCrt)) {
-			t.Fatal("error appending root ca")
-		}
-
-		// Load the host certificate and key.
-		var err error
-		hostKeyPair, err = tls.X509KeyPair([]byte(hostCrt), []byte(hostKey))
-		if err != nil {
-			t.Fatalf("error loading host certs: %v", err)
-		}
+	// Create the cert pool for the CA.
+	rootCAs := x509.NewCertPool()
+	if !rootCAs.AppendCertsFromPEM([]byte(caCrt)) {
+		t.Fatal("failed to append ca cert")
 	}
 
-	// Start listening.
-	lis, err := memconn.Listen(network, address)
+	// Load the host certificate and key.
+	hostKeyPair, err := tls.X509KeyPair([]byte(hostCrt), []byte(hostKey))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("failed to load host cert/key pair: %v", err)
 	}
-	defer func() {
-		if err := lis.Close(); err != nil {
-			t.Fatalf("error closing listener: %v", err)
-		}
-	}()
 
-	var (
-		wgUp             sync.WaitGroup
-		wgDown           sync.WaitGroup
-		remoteConnClosed = make(chan struct{})
-	)
+	// Announce a new listener named "localhost" the specified network.
+	lis, err := memconn.Listen(network, "localhost")
+	if err != nil {
+		t.Fatalf(
+			"failed to listen on network=%s laddr=%s: %v",
+			network, "localhost", err)
+	}
 
-	defer func() {
-		<-remoteConnClosed
-	}()
+	// Ensure the listener is closed.
+	defer lis.Close()
 
-	wgUp.Add(2)
-	wgDown.Add(2)
-
+	// Start a goroutine that will wait for a client to dial the
+	// listener and then echo back any data sent to the remote
+	// connection.
 	go func() {
-		conn, err := lis.Accept()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if debug {
-			conn = &connLogger{
-				Conn:      conn,
-				isRemote:  true,
-				opCounter: &opCounter,
+		for {
+			conn, err := lis.Accept()
+			if err != nil {
+				return
 			}
-		}
 
-		drain := func() {}
+			go func(conn net.Conn) {
 
-		if useTLS {
-			if network == "memu" {
-				noTLS := conn
-				drain = func() {
-					io.Copy(ioutil.Discard, noTLS)
+				// Wrap the new connection inside of a TLS server.
+				conn = tls.Server(conn, &tls.Config{
+					Certificates: []tls.Certificate{hostKeyPair},
+					RootCAs:      rootCAs,
+				})
+
+				// Ensure the connection is closed.
+				defer func() {
+					if network == "memu" {
+						go io.Copy(ioutil.Discard, conn)
+					}
+					conn.Close()
+				}()
+
+				// Get the number of byes to read.
+				var n int64
+				binary.Read(conn, binary.LittleEndian, &n)
+
+				// Echo the data by reading and writing n bytes from
+				// and to the connection.
+				if network == "memb" {
+					io.CopyN(conn, conn, n)
+				} else {
+					io.CopyBuffer(conn, conn, make([]byte, n))
 				}
-			}
-			conn = tls.Server(conn, &tls.Config{
-				Certificates: []tls.Certificate{hostKeyPair},
-				RootCAs:      rootCAs,
+			}(conn)
+		}
+	}()
+
+	t.Run("Parallel", func(t *testing.T) {
+		for i := 0; i < parallelTests; i++ {
+			t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
+				t.Parallel()
+
+				// Dial the network named "localhost".
+				conn, err := memconn.Dial(network, "localhost")
+				if err != nil {
+					t.Fatalf(
+						"failed to dial network=%s laddr=%s: %v",
+						network, "localhost", err)
+				}
+
+				// Wrap the connection in TLS. It's necessary to set the
+				// "ServerName" field in the TLS configuration in order to
+				// match one of the host certificate's Subject Alternate Name
+				// values.
+				conn = tls.Client(conn, &tls.Config{
+					RootCAs:    rootCAs,
+					ServerName: "localhost",
+				})
+
+				// Ensure the connection is closed.
+				defer func() {
+					if network == "memu" {
+						go io.Copy(ioutil.Discard, conn)
+					}
+					conn.Close()
+				}()
+
+				// Get the number of bytes to write then read from
+				// the connection.
+				n := rand.Int63n(1023) + 1
+
+				// Inform the remote side that n bytes will be sent.
+				binary.Write(conn, binary.LittleEndian, n)
+
+				// Create a buffer n bytes in length.
+				data := make([]byte, n)
+
+				// Fill the buffer with random data.
+				rand.Read(data)
+
+				// Write the data to the connection.
+				io.CopyN(conn, bytes.NewReader(data), n)
+
+				// Read the echoed data.
+				buf := &bytes.Buffer{}
+				io.CopyN(buf, conn, n)
+
+				if data2 := buf.Bytes(); !bytes.Equal(data, data2) {
+					t.Fatalf(
+						"echo failed! len(data)=%d len(data2)=%d"+
+							"\n\ndata=%v\n\ndata2=%v\n",
+						len(data), len(data2), data, data2)
+				}
 			})
 		}
-
-		defer func() {
-			go drain()
-			conn.Close()
-			close(remoteConnClosed)
-		}()
-
-		buf := &bytes.Buffer{}
-		if _, err := io.CopyN(buf, conn, 8); err != nil {
-			t.Fatal(err)
-		}
-		wgUp.Done()
-		wgUp.Wait()
-		if _, err := io.CopyN(conn, buf, 8); err != nil {
-			t.Fatal(err)
-		}
-		wgDown.Done()
-		wgDown.Wait()
-	}()
-
-	// Dial the server using TLS.
-	client, err := memconn.Dial(network, address)
-	if err != nil {
-		t.Fatalf("error dialing server: %v", err)
-	}
-	if debug {
-		client = &connLogger{Conn: client, opCounter: &opCounter}
-	}
-
-	drain := func() {}
-
-	if useTLS {
-		if network == "memu" {
-			noTLS := client
-			drain = func() {
-				io.Copy(ioutil.Discard, noTLS)
-			}
-		}
-		client = tls.Client(client, &tls.Config{
-			RootCAs:    rootCAs,
-			ServerName: "localhost",
-		})
-	}
-
-	defer func() {
-		go drain()
-		client.Close()
-	}()
-
-	data := []byte{0, 1, 2, 3, 4, 5, 6, 7}
-	wbuf := bytes.NewBuffer(data)
-	if _, err := io.CopyN(client, wbuf, 8); err != nil {
-		t.Fatal(err)
-	}
-	wgUp.Done()
-	wgUp.Wait()
-	rbuf := &bytes.Buffer{}
-	if _, err := io.CopyN(rbuf, client, 8); err != nil {
-		t.Fatal(err)
-	}
-
-	if data2 := rbuf.Bytes(); !bytes.Equal(data, data2) {
-		t.Fatalf("wbuf != rbuf: wbuf=%v, rbuf=%v", data, data2)
-	}
-	wgDown.Done()
-	wgDown.Wait()
+	})
 }
 
 func TestTLS_HTTP_Memu(t *testing.T) {
@@ -403,113 +357,3 @@ iKGJnYJ6BdQGeUd+42vE5md+f5jujt46oK36eMyT7j52NUp/7cWpOW6c16O1wchy
 P+eS2Jh9T9rdxcFOY9Myr6zt
 -----END PRIVATE KEY-----`
 )
-
-var (
-	debug, _   = strconv.ParseBool(os.Getenv("MEMCONN_DEBUG"))
-	verbose, _ = strconv.ParseBool(os.Getenv("MEMCONN_VERBOSE"))
-)
-
-type connLogger struct {
-	net.Conn
-	opCounter *uint64
-	isRemote  bool
-}
-
-// Read implements the net.Conn Read method.
-func (c *connLogger) Read(b []byte) (rn int, failed error) {
-	if debug {
-		c.logReadOrWrite("R1", 0, b)
-	}
-	n, err := c.Conn.Read(b)
-	if debug {
-		f := c.logReadOrWrite("R2", n, b)
-		defer func() {
-			f(failed)
-		}()
-	}
-	return n, err
-}
-
-// Write implements the net.Conn Write method.
-func (c *connLogger) Write(b []byte) (wn int, failed error) {
-	if debug {
-		c.logReadOrWrite("W1", 0, b)
-	}
-	n, err := c.Conn.Write(b)
-	if debug {
-		f := c.logReadOrWrite("W2", n, b)
-		defer func() {
-			f(failed)
-		}()
-	}
-	return n, err
-}
-
-var logReadOrWriteHeaderOnce sync.Once
-
-func (c *connLogger) logReadOrWrite(op string, n int, b []byte) func(error) {
-
-	logReadOrWriteHeaderOnce.Do(func() {
-		log_("SRC RW ID  LEN_DAT HASH_DAT LEN_BUF HASH_BUF BUF\n")
-	})
-
-	rtype := "LOC"
-	if c.isRemote {
-		rtype = "REM"
-	}
-
-	var (
-		hashDat string
-		hashBuf string
-	)
-	{
-		h := md5.New()
-		h.Write(b)
-		hashBuf = fmt.Sprintf("%x", h.Sum(nil))[0:7]
-	}
-	{
-		h := md5.New()
-		h.Write(b[:n])
-		hashDat = fmt.Sprintf("%x", h.Sum(nil))[0:7]
-	}
-
-	var id uint64
-	switch op {
-	case "R1":
-		id = atomic.AddUint64(c.opCounter, 1)
-	case "R2":
-		id = atomic.LoadUint64(c.opCounter)
-	case "W1":
-		id = atomic.AddUint64(c.opCounter, 1)
-	case "W2":
-		id = atomic.LoadUint64(c.opCounter)
-	}
-
-	patt := "%s %-2s %03d %-7d %-8s %-7d %-8s %s"
-
-	const max = 8
-	var szB string
-	if verbose || (n > 0 && n <= max) {
-		szB = fmt.Sprintf("%v", b)
-	} else {
-		szB = fmt.Sprintf("%v", b[:max])
-		szB = szB[:len(szB)-1]
-		szB = szB + " ...]"
-	}
-
-	log_(patt+"\n", rtype, op, id, n, hashDat, len(b), hashBuf, szB)
-
-	return func(err error) {
-		if err != nil {
-			log_(patt+" err=%v\n",
-				rtype, op, id, n, hashDat, len(b), hashBuf, szB, err)
-		}
-	}
-}
-
-func log_(msg string, args ...interface{}) {
-	if !debug {
-		return
-	}
-	fmt.Fprintf(os.Stderr, msg, args...)
-}
