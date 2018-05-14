@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -26,26 +25,16 @@ func TestUnbufferedTLS(t *testing.T) {
 }
 
 func testParallelTLS(t *testing.T, network string) {
-
 	// Create the cert pool for the CA.
 	rootCAs := x509.NewCertPool()
-	if !rootCAs.AppendCertsFromPEM([]byte(caCrt)) {
-		t.Fatal("failed to append ca cert")
-	}
+	rootCAs.AppendCertsFromPEM([]byte(caCrt))
 
 	// Load the host certificate and key.
-	hostKeyPair, err := tls.X509KeyPair([]byte(hostCrt), []byte(hostKey))
-	if err != nil {
-		t.Fatalf("failed to load host cert/key pair: %v", err)
-	}
+	hostKeyPair, _ := tls.X509KeyPair([]byte(hostCrt), []byte(hostKey))
+	_ = hostKeyPair
 
 	// Announce a new listener named "localhost" the specified network.
-	lis, err := memconn.Listen(network, "localhost")
-	if err != nil {
-		t.Fatalf(
-			"failed to listen on network=%s laddr=%s: %v",
-			network, "localhost", err)
-	}
+	lis, _ := memconn.Listen(network, "localhost")
 
 	// Ensure the listener is closed.
 	defer lis.Close()
@@ -62,6 +51,12 @@ func testParallelTLS(t *testing.T, network string) {
 
 			go func(conn net.Conn) {
 
+				// Set the transmit buffer to 64KiB
+				conn.(*memconn.Conn).SetWriteBuffer(64 * 1024)
+
+				// Set the limit for the number of bytes buffered to 10MiB.
+				conn.(*memconn.Conn).SetWriteBufferLimit(10 * 1024 * 1024)
+
 				// Wrap the new connection inside of a TLS server.
 				conn = tls.Server(conn, &tls.Config{
 					Certificates: []tls.Certificate{hostKeyPair},
@@ -76,38 +71,30 @@ func testParallelTLS(t *testing.T, network string) {
 					conn.Close()
 				}()
 
-				// Get the number of byes to read.
-				var n int64
-				binary.Read(conn, binary.LittleEndian, &n)
-
-				// Echo the data by reading and writing n bytes from
-				// and to the connection.
-				if network == "memb" {
-					io.CopyN(conn, conn, n)
-				} else {
-					io.CopyBuffer(conn, conn, make([]byte, n))
-				}
+				// Echo any data received from the connection.
+				io.Copy(conn, conn)
 			}(conn)
 		}
 	}()
 
-	t.Run("Parallel", func(t *testing.T) {
-		for i := 0; i < parallelTests; i++ {
+	t.Run("Client", func(t *testing.T) {
+		for i := 0; i < args.clients; i++ {
 			t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 				t.Parallel()
 
 				// Dial the network named "localhost".
-				conn, err := memconn.Dial(network, "localhost")
-				if err != nil {
-					t.Fatalf(
-						"failed to dial network=%s laddr=%s: %v",
-						network, "localhost", err)
-				}
+				conn, _ := memconn.Dial(network, "localhost")
+
+				// Set the transmit buffer to 64KiB
+				conn.(*memconn.Conn).SetWriteBuffer(64 * 1024)
+
+				// Set the limit for the number of bytes buffered to 10MiB.
+				conn.(*memconn.Conn).SetWriteBufferLimit(10 * 1024 * 1024)
 
 				// Wrap the connection in TLS. It's necessary to set the
-				// "ServerName" field in the TLS configuration in order to
-				// match one of the host certificate's Subject Alternate Name
-				// values.
+				// "ServerName" field in the TLS configuration in order
+				// to match one of the host certificate's Subject Alternate
+				// Name values.
 				conn = tls.Client(conn, &tls.Config{
 					RootCAs:    rootCAs,
 					ServerName: "localhost",
@@ -122,30 +109,36 @@ func testParallelTLS(t *testing.T, network string) {
 				}()
 
 				// Get the number of bytes to write then read from
-				// the connection.
-				n := rand.Int63n(1023) + 1
-
-				// Inform the remote side that n bytes will be sent.
-				binary.Write(conn, binary.LittleEndian, n)
+				// the connection. The value is between 4MiB-8MiB.
+				n := rand.Int63n(4194304) + 4194304
 
 				// Create a buffer n bytes in length.
-				data := make([]byte, n)
+				out := make([]byte, n)
 
 				// Fill the buffer with random data.
-				rand.Read(data)
+				rand.Read(out)
 
 				// Write the data to the connection.
-				io.CopyN(conn, bytes.NewReader(data), n)
+				if network == "memu" {
+					// If the network is unbuffered then the data must
+					// be written on a separate goroutine so the write
+					// isn't blocked.
+					go io.Copy(conn, bytes.NewReader(out))
+				} else {
+					io.Copy(conn, bytes.NewReader(out))
+				}
 
-				// Read the echoed data.
-				buf := &bytes.Buffer{}
-				io.CopyN(buf, conn, n)
+				// The remote side of the connection should echo the
+				// same data back to this side of the connection.
+				//
+				// Create a new buffer with the same size as the
+				// original and read the echoed data.
+				in := &bytes.Buffer{}
+				inn, _ := io.CopyN(in, conn, n)
 
-				if data2 := buf.Bytes(); !bytes.Equal(data, data2) {
-					t.Fatalf(
-						"echo failed! len(data)=%d len(data2)=%d"+
-							"\n\ndata=%v\n\ndata2=%v\n",
-						len(data), len(data2), data, data2)
+				// Verify the copied and echoed data are equal.
+				if !bytes.Equal(out, in.Bytes()) {
+					t.Fatalf("echo failed: len(out)=%d len(in)=%d", n, inn)
 				}
 			})
 		}

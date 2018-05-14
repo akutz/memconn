@@ -24,8 +24,7 @@ benchmark-go1.9:
 	MAKE_TARGET=benchmark $(MAKE) docker-run
 
 test:
-	go test
-	go test -race -run 'Race$$'
+	go test -clients 100
 
 test-go1.9:
 	MAKE_TARGET=test $(MAKE) docker-run

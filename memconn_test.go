@@ -2,13 +2,14 @@ package memconn_test
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"math/rand"
 	"net"
 	"os"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,48 +17,28 @@ import (
 	"github.com/akutz/memconn"
 )
 
-// TestMemuRace is for verifying there is no race condition when
-// calling Dial and Listen concurrently for the same address. The
-// Provider.Dial function did not used to initialize the Provider.cnxns
-// map since the function only queries it, and querying a nil map is
-// allowed. However, Go detected a race condition when the field was
-// both assigned and queried at the same time.
-//
-// Many thanks to @vburenin for spotting this!
-//
-//         $ go test -race -run TestMemuRace
-func TestMemuRace(t *testing.T) {
-	for i := 0; i < 1000; i++ {
-		p := &memconn.Provider{}
-		addr := strconv.Itoa(i)
-		go func(p *memconn.Provider, addr string) {
-			if c, err := p.Listen("memu", addr); err == nil {
-				go c.Accept()
-			}
-		}(p, addr)
-		go func(p *memconn.Provider, addr string) {
-			if c, err := p.Dial("memu", addr); err == nil {
-				c.Close()
-			}
-		}(p, addr)
-	}
+var args struct {
+	clients int
 }
 
-func TestMembRace(t *testing.T) {
-	for i := 0; i < 1000; i++ {
-		p := &memconn.Provider{}
-		addr := strconv.Itoa(i)
-		go func(p *memconn.Provider, addr string) {
-			if c, err := p.Listen("memb", addr); err == nil {
-				go c.Accept()
-			}
-		}(p, addr)
-		go func(p *memconn.Provider, addr string) {
-			if c, err := p.Dial("memb", addr); err == nil {
-				c.Close()
-			}
-		}(p, addr)
+func TestMain(m *testing.M) {
+	// Seed the random package so the values returned by rand.Int63n
+	// are not predetermined.
+	rand.Seed(time.Now().UnixNano())
+
+	flag.IntVar(
+		&args.clients,
+		"clients", 1,
+		"The number of clients accessing a server during a test execution.")
+
+	flag.Parse()
+
+	// Discard all log statements unless -test.v is present.
+	if !testing.Verbose() {
+		log.SetOutput(ioutil.Discard)
 	}
+
+	os.Exit(m.Run())
 }
 
 // TestMemuNoDeadline validates that the memu connection properly implements
@@ -246,8 +227,8 @@ func testNetConnParallel(
 
 	defer lis.Close()
 	network, addr := lis.Addr().Network(), lis.Addr().String()
-	t.Run("Parallel", func(t *testing.T) {
-		for i := 0; i < parallelTests; i++ {
+	t.Run("Client", func(t *testing.T) {
+		for i := 0; i < args.clients; i++ {
 			t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 				t.Parallel()
 				writeAndReadTestData(t, network, addr, dial)

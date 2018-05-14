@@ -27,7 +27,7 @@ func Example_buffered() {
 		defer conn.Close()
 
 		// Echo the data back to the client.
-		io.CopyN(conn, conn, 13)
+		io.Copy(conn, conn)
 	}()
 
 	// Dial the buffered, in-memory network named "localhost".
@@ -37,7 +37,7 @@ func Example_buffered() {
 	defer conn.Close()
 
 	// Write the data to the server.
-	conn.Write([]byte("Hello, world."))
+	go conn.Write([]byte("Hello, world."))
 
 	// Read the data from the server.
 	io.CopyN(os.Stdout, conn, 13)
