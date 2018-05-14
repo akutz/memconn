@@ -257,6 +257,9 @@ func (c *Conn) SetWriteDeadline(t time.Time) error {
 func (c *Conn) Read(b []byte) (int, error) {
 	n, err := c.pipe.Read(b)
 	if err != nil {
+		if err == io.EOF {
+			return n, err
+		}
 		if e, ok := err.(*net.OpError); ok {
 			e.Addr = c.raddr
 			e.Source = c.laddr
@@ -476,18 +479,10 @@ func (c *Conn) writeAsync(p []byte) (int, error) {
 					}
 
 					// Write the transmit buffer to the underlying data stream.
-					n, err := c.pipe.write(txBuf)
+					n, err := c.writeSync(txBuf)
 
 					if err != nil {
-						go func() {
-							c.buf.tx.errs <- &net.OpError{
-								Op:     "write",
-								Addr:   c.raddr,
-								Source: c.laddr,
-								Net:    c.raddr.network,
-								Err:    err,
-							}
-						}()
+						go func() { c.buf.tx.errs <- err }()
 					}
 
 					// Trim the transmit buffer to reflect the number of
