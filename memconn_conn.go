@@ -3,6 +3,7 @@ package memconn
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"time"
@@ -272,6 +273,9 @@ func (c *Conn) Read(b []byte) (int, error) {
 			e.Source = c.laddr
 			return n, e
 		}
+		if err == io.EOF {
+			return n, err
+		}
 		return n, &net.OpError{
 			Op:     "read",
 			Addr:   c.raddr,
@@ -298,6 +302,9 @@ func (c *Conn) writeSync(b []byte) (int, error) {
 			e.Addr = c.raddr
 			e.Source = c.laddr
 			return n, e
+		}
+		if err == io.EOF {
+			return n, err
 		}
 		return n, &net.OpError{
 			Op:     "write",
