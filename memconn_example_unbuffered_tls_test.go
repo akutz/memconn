@@ -55,12 +55,8 @@ func Example_unbufferedTLS() {
 			conn.Close()
 		}()
 
-		// Echo the data back to the client. It is necessary to use
-		// an intermediate buffer to do the copy instead of using
-		// io.CopyN(conn, conn, 13). This is because all writes must
-		// be matched by reads when using an unbuffered connection,
-		// and without the intermediate buffer, the copy would hang.
-		io.CopyBuffer(conn, conn, make([]byte, 13))
+		// Echo the data back to the client.
+		io.Copy(conn, conn)
 	}()
 
 	// Dial the unbuffered, in-memory network named "localhost".
@@ -90,7 +86,7 @@ func Example_unbufferedTLS() {
 	}()
 
 	// Write the data to the server.
-	conn.Write([]byte("Hello, world."))
+	go conn.Write([]byte("Hello, world."))
 
 	// Read the data from the server.
 	io.CopyN(os.Stdout, conn, 13)
