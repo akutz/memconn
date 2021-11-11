@@ -1,4 +1,4 @@
-# MemConn [![GoDoc](https://godoc.org/github.com/akutz/memconn?status.svg)](http://godoc.org/github.com/akutz/memconn) [![Build Status](http://travis-ci.org/akutz/memconn.svg?branch=master)](https://travis-ci.org/akutz/memconn) [![Go Report Card](http://goreportcard.com/badge/akutz/memconn)](http://goreportcard.com/report/akutz/memconn)
+# MemConn [![Go Reference](https://pkg.go.dev/badge/github.com/akutz/memconn.svg)](https://pkg.go.dev/github.com/akutz/memconn) [![Build Status](https://travis-ci.org/akutz/memconn.svg?branch=master)](https://travis-ci.org/akutz/memconn) [![Go Report Card](https://goreportcard.com/badge/github.com/akutz/memconn)](https://goreportcard.com/report/github.com/akutz/memconn)
 MemConn provides named, in-memory network connections for Go.
 
 ## Create a Server
