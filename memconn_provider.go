@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net"
 	"sync"
 	"time"
@@ -204,7 +205,7 @@ func (p *Provider) DialMemContext(
 		// epoch in nanoseconds. This value need not be unique.
 		if laddr == nil {
 			laddr = &Addr{
-				Name:    fmt.Sprintf("%d", time.Now().UnixNano()),
+				Name:    fmt.Sprintf("%d-%d", time.Now().UnixNano(), rand.Uint32()),
 				network: network,
 			}
 		} else {
