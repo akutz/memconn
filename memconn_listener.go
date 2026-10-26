@@ -32,32 +32,30 @@ func (l *Listener) dial(
 	//	remoteConn.Close()
 	//}()
 
-	// If the provided context is nill then announce a new connection
-	// by placing the new remoteConn onto the rcvr channel. An Accept
-	// call from this listener will remove the remoteConn from the channel.
+	// A nil context means no caller deadline, but listener shutdown must
+	// still interrupt a dial waiting for space in the accept queue.
 	if ctx == nil {
-		l.rcvr <- remote
-		return local, nil
+		ctx = context.Background()
 	}
 
-	// Announce a new connection by placing the new remoteConn
-	// onto the rcvr channel. An Accept call from this listener will
-	// remove the remoteConn from the channel. However, if that does
-	// not occur by the time the context times out / is cancelled, then
-	// an error is returned.
+	var err error
 	select {
 	case l.rcvr <- remote:
 		return local, nil
 	case <-ctx.Done():
-		local.Close()
-		remote.Close()
-		return nil, &net.OpError{
-			Addr:   raddr,
-			Source: laddr,
-			Net:    network,
-			Op:     "dial",
-			Err:    ctx.Err(),
-		}
+		err = ctx.Err()
+	case <-l.done:
+		err = errors.New("listener closed")
+	}
+
+	local.Close()
+	remote.Close()
+	return nil, &net.OpError{
+		Addr:   raddr,
+		Source: laddr,
+		Net:    network,
+		Op:     "dial",
+		Err:    err,
 	}
 }
 
