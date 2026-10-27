@@ -260,6 +260,9 @@ func (c *Conn) Close() error {
 // occurring after the connection is closed. Therefore this channel
 // should not be used to determine when the connection is closed.
 func (c *Conn) Errs() <-chan error {
+	if c.buf == nil {
+		return nil
+	}
 	return c.buf.errs
 }
 
